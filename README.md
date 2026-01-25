@@ -355,6 +355,104 @@ The operator creates resources compatible with the llm-d scheduler setup:
 2. **Service**: Named `gaie-inference-scheduling-proxy` (configurable)
 3. **Endpoints**: Automatically populated from deployment pods
 
+### Which path is used by the current settings?
+
+With the current operator defaults and samples:
+
+- **Scheduler path is used**: `Gateway (Istio class) -> HTTPRoute -> proxy Service -> simulator pods`
+- The Gateway data plane is Istio, but the **routing path is still the scheduler path** because requests go through the scheduler gateway and HTTPRoute.
+
+Direct service path is only used if you bypass the scheduler gateway and call the simulator proxy Service directly.
+
+#### Request flow (current default)
+```
+Client
+  -> Scheduler Gateway (Istio data plane)
+  -> HTTPRoute
+  -> gaie-inference-scheduling-proxy (Service)
+  -> simulator decode pods
+```
+
+#### Direct service path (bypass scheduler)
+```
+Client
+  -> gaie-inference-scheduling-proxy (Service)
+  -> simulator decode pods
+```
+
+Example commands:
+```bash
+# Scheduler path (recommended): port-forward scheduler gateway service
+kubectl port-forward -n llm-d-inference-scheduler \
+  svc/infra-inference-scheduling-inference-gateway-istio 8080:80
+curl -X POST http://localhost:8080/v1/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"random","prompt":"test","max_tokens":5}'
+
+# Direct service path (bypass scheduler)
+kubectl port-forward -n llm-d-sim svc/gaie-inference-scheduling-proxy 8200:8200
+curl -X POST http://localhost:8200/v1/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"random","prompt":"test","max_tokens":5}'
+```
+
+### Is round-robin used with two decode pods?
+
+It depends on which layer is making the routing decision:
+
+- **Scheduler path (current default)**: EPP chooses the backend based on scorers (load, KV-cache, etc.), so it is **not round-robin** by default and can be intentionally uneven.
+- **Direct service path**: Kubernetes Service load-balancing is used (roughly round-robin **per connection**).
+- **Istio balancing**: Istio’s default is `LEAST_REQUEST`. You only get round-robin if a `DestinationRule` explicitly sets `simple: ROUND_ROBIN`.
+
+Check the active Istio policy (if present):
+```bash
+kubectl get destinationrule gaie-inference-scheduling-proxy-lb -n llm-d-sim \
+  -o jsonpath='{.spec.trafficPolicy.loadBalancer}'
+```
+
+### Does scoring work with Istio + scheduler path?
+
+Yes, **if the Gateway is configured to call EPP via ext_proc** (Gateway API Inference Extension or equivalent filter configuration).
+This operator deploys EPP and the scheduler Gateway/HTTPRoute, but **it does not inject ext_proc configuration by itself**.
+If your Gateway implementation is already configured for EPP (e.g., via GatewayParameters/EnvoyFilter), scoring will work.
+If not, requests will still be routed, but EPP scoring will not be applied.
+
+#### GatewayParameters vs EnvoyFilter (what they do and what this operator manages)
+
+**GatewayParameters (kgateway-specific)**:
+- Used with the **kgateway** GatewayClass.
+- Attaches config to the Gateway/Service at the **Gateway API controller layer**.
+- Typical use: define Envoy bootstrap, extensions, or ext_proc integration in a controller-native way.
+- In this repo, the operator **does not** create GatewayParameters.
+
+**EnvoyFilter (Istio-specific)**:
+- Used with the **istio** GatewayClass.
+- Injects Envoy filters (e.g., `ext_proc`) into the Gateway proxy **after** it is created.
+- Typical use: configure EPP integration by pointing ext_proc to the EPP service.
+- In this repo, the operator **does not** create EnvoyFilters.
+
+#### What this means for current settings
+
+- **Current defaults use Istio** (`gateway.className: istio`), so you need an **EnvoyFilter** (or equivalent Istio GatewayParameters if available) to enable EPP scoring.
+- The operator **does deploy EPP**, so once the ext_proc filter is installed, scoring is feasible without changing this operator.
+- If you switch to **kgateway**, you would use **GatewayParameters** instead of EnvoyFilter for the ext_proc wiring.
+
+Practical takeaway: **routing works now**, and **scoring works once the Gateway is configured to call EPP**.
+
+### Bypass setup and impact on KV-scoring tests
+
+This project uses a **bypass** route in the scheduler integration to avoid InferencePool headless service/port issues:
+`HTTPRoute -> Service (gaie-inference-scheduling-proxy) -> simulator pods`
+
+This makes routing reliable, but it **bypasses InferencePool-based selection**, so:
+
+- **KV-scoring tests are not meaningful** when the bypass path is used.
+- EPP may be running, but it is **not influencing backend selection** unless the Gateway is configured with ext_proc and the request path is mediated by InferencePool/EPP.
+
+If you want KV-scoring behavior to show up in tests:
+1) Enable ext_proc on the Gateway (EnvoyFilter), and
+2) Route through an InferencePool backendRef instead of the proxy Service.
+
 ### Testing with Scheduler
 
 ```bash
@@ -447,6 +545,37 @@ controller-gen crd paths="./api/..." output:crd:dir=./config/crd
 | Status Checking | Multiple kubectl get commands | `kubectl get simulatordeployment` |
 | Configuration | Multiple YAML files | Single CR |
 | GitOps | Difficult to track | Declarative, version-controlled |
+
+
+## Future Work
+
+### EnvoyFilter example (Istio ext_proc -> EPP)
+
+Apply this in `llm-d-inference-scheduler` to enable scoring. It targets the scheduler gateway pods and points ext_proc to the EPP service.
+
+Sample manifest:
+`config/samples/envoyfilter-epp.yaml`
+
+Apply the filter:
+```bash
+kubectl apply -f config/samples/envoyfilter-epp.yaml
+```
+
+Quick validation:
+```bash
+# Confirm EnvoyFilter is attached
+kubectl get envoyfilter -n llm-d-inference-scheduler
+
+# Check gateway has the ext_proc filter
+istioctl proxy-config listeners -n llm-d-inference-scheduler \
+  $(kubectl get pod -n llm-d-inference-scheduler \
+    -l gateway.networking.k8s.io/gateway-name=infra-inference-scheduling-inference-gateway \
+    -o jsonpath='{.items[0].metadata.name}') | rg ext_proc
+
+# Check EPP logs for incoming ext_proc requests
+kubectl logs -n llm-d-inference-scheduler \
+  deploy/gaie-inference-scheduling-epp --tail=100
+```
 
 ## License
 
