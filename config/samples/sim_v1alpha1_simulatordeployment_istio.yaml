@@ -1,0 +1,38 @@
+apiVersion: sim.llm-d.io/v1alpha1
+kind: SimulatorDeployment
+metadata:
+  name: llm-sim-istio
+  namespace: llm-d-sim
+spec:
+  # Simulator configuration
+  replicas: 2
+  image: "docker.io/library/llm-d-simulator:local"
+  
+  # Resource requirements (reduced for local testing)
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+  
+  # Service configuration
+  service:
+    name: "gaie-inference-scheduling-proxy"
+    port: 8200
+    type: "ClusterIP"
+  
+  # Gateway configuration
+  gateway:
+    enabled: true
+    className: "istio"
+    routeName: "infra-sim-inference-gateway"
+  
+  # Load balancing with Istio DestinationRule
+  loadBalancing:
+    enabled: true
+    algorithm: "ROUND_ROBIN"
+    connectionPool:
+      http1MaxPendingRequests: 1
+      maxRequestsPerConnection: 1

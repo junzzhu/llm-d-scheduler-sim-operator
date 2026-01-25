@@ -1,0 +1,97 @@
+apiVersion: sim.llm-d.io/v1alpha1
+kind: SimulatorDeployment
+metadata:
+  name: llm-sim-full
+  namespace: llm-d-sim
+spec:
+  # EPP (Endpoint Picker) configuration
+  epp:
+    enabled: true
+    replicas: 1
+    image: "ghcr.io/llm-d/llm-d-inference-scheduler:v0.4.0"
+    port: 8100
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "500m"
+        memory: "256Mi"
+
+  # Inference Gateway configuration
+  inferenceGateway:
+    enabled: true
+    # Standard gateway (kgateway)
+    standard:
+      enabled: true
+      replicas: 1
+      image: "cr.kgateway.dev/kgateway-dev/envoy-wrapper:v2.1.1"
+      port: 8080
+      resources:
+        requests:
+          cpu: "100m"
+          memory: "128Mi"
+        limits:
+          cpu: "500m"
+          memory: "256Mi"
+    # Istio gateway
+    istio:
+      enabled: true
+      replicas: 1
+      image: "docker.io/istio/proxyv2:1.28.1"
+      port: 8080
+      resources:
+        requests:
+          cpu: "100m"
+          memory: "128Mi"
+        limits:
+          cpu: "500m"
+          memory: "256Mi"
+
+  # Prefill stage configuration
+  prefill:
+    enabled: true
+    replicas: 2
+    image: "docker.io/library/llm-d-simulator:local"
+    port: 8200
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "256Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+    # args:
+    #   - "--stage"
+    #   - "prefill"
+
+  # Decode stage configuration
+  decode:
+    enabled: true
+    replicas: 2
+    image: "docker.io/library/llm-d-simulator:local"
+    port: 8200
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "256Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+    # args:
+    #   - "--stage"
+    #   - "decode"
+
+  # Service configuration (for backward compatibility)
+  service:
+    name: "gaie-inference-scheduling-proxy"
+    port: 8200
+    type: "ClusterIP"
+
+  # Load balancing with Istio DestinationRule
+  loadBalancing:
+    enabled: true
+    algorithm: "ROUND_ROBIN"
+    connectionPool:
+      http1MaxPendingRequests: 1
+      maxRequestsPerConnection: 1

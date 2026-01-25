@@ -1,0 +1,18 @@
+apiVersion: sim.llm-d.io/v1alpha1
+kind: SimulatorDeployment
+metadata:
+  name: llm-sim-minimal
+  namespace: llm-d-sim
+spec:
+  replicas: 2
+  
+  # Use local image for the simulator
+  image: "docker.io/library/llm-d-simulator:local"
+  
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"

@@ -1,0 +1,441 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: simulatordeployments.sim.llm-d.io
+spec:
+  group: sim.llm-d.io
+  names:
+    kind: SimulatorDeployment
+    listKind: SimulatorDeploymentList
+    plural: simulatordeployments
+    shortNames:
+    - simdep
+    singular: simulatordeployment
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: SimulatorDeployment is the Schema for the simulatordeployments API
+        properties:
+          apiVersion:
+            description: 'APIVersion defines the versioned schema of this representation of an object.'
+            type: string
+          kind:
+            description: 'Kind is a string value representing the REST resource this object represents.'
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: SimulatorDeploymentSpec defines the desired state of SimulatorDeployment
+            properties:
+              decode:
+                description: Decode stage configuration
+                properties:
+                  args:
+                    description: Args are additional arguments to pass to the container
+                    items:
+                      type: string
+                    type: array
+                  enabled:
+                    description: Enabled determines if this stage should be deployed
+                    type: boolean
+                  image:
+                    description: Image is the container image for this stage
+                    type: string
+                  port:
+                    default: 8200
+                    description: Port for the service
+                    format: int32
+                    type: integer
+                  replicas:
+                    default: 2
+                    description: Replicas is the number of pods for this stage
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  resources:
+                    description: Resources defines the resource requirements
+                    properties:
+                      limits:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: 'Limits describes the maximum amount of compute resources allowed.'
+                        type: object
+                      requests:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: 'Requests describes the minimum amount of compute resources required.'
+                        type: object
+                    type: object
+                type: object
+              epp:
+                description: EPP (Endpoint Picker) configuration
+                properties:
+                  enabled:
+                    description: Enabled determines if EPP should be deployed
+                    type: boolean
+                  image:
+                    default: ghcr.io/llm-d/llm-d-inference-scheduler:v0.4.0
+                    description: Image is the container image for EPP
+                    type: string
+                  port:
+                    default: 8100
+                    description: Port for the EPP service
+                    format: int32
+                    type: integer
+                  replicas:
+                    default: 1
+                    description: Replicas is the number of EPP pods
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  resources:
+                    description: Resources defines the resource requirements for EPP pods
+                    properties:
+                      limits:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: 'Limits describes the maximum amount of compute resources allowed.'
+                        type: object
+                      requests:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: 'Requests describes the minimum amount of compute resources required.'
+                        type: object
+                    type: object
+                type: object
+              gateway:
+                description: Gateway configuration
+                properties:
+                  className:
+                    default: istio
+                    description: ClassName is the gateway class (istio, kgateway, etc.)
+                    type: string
+                  enabled:
+                    description: Enabled determines if gateway should be created
+                    type: boolean
+                  routeName:
+                    default: infra-sim-inference-gateway
+                    description: RouteName is the name for the route/gateway
+                    type: string
+                type: object
+              image:
+                default: ghcr.io/llm-d/llm-d-simulator:latest
+                description: Image is the container image for the simulator
+                type: string
+              inferenceGateway:
+                description: InferenceGateway configuration
+                properties:
+                  enabled:
+                    description: Enabled determines if inference gateways should be deployed
+                    type: boolean
+                  istio:
+                    description: Istio gateway configuration
+                    properties:
+                      enabled:
+                        description: Enabled determines if this gateway instance should be deployed
+                        type: boolean
+                      image:
+                        default: docker.io/istio/proxyv2:1.28.1
+                        description: Image is the container image for the gateway
+                        type: string
+                      port:
+                        default: 8080
+                        description: Port for the gateway service
+                        format: int32
+                        type: integer
+                      replicas:
+                        default: 1
+                        description: Replicas is the number of gateway pods
+                        format: int32
+                        minimum: 1
+                        type: integer
+                      resources:
+                        description: Resources defines the resource requirements
+                        properties:
+                          limits:
+                            additionalProperties:
+                              anyOf:
+                              - type: integer
+                              - type: string
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              x-kubernetes-int-or-string: true
+                            description: 'Limits describes the maximum amount of compute resources allowed.'
+                            type: object
+                          requests:
+                            additionalProperties:
+                              anyOf:
+                              - type: integer
+                              - type: string
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              x-kubernetes-int-or-string: true
+                            description: 'Requests describes the minimum amount of compute resources required.'
+                            type: object
+                        type: object
+                    type: object
+                  standard:
+                    description: Standard gateway configuration
+                    properties:
+                      enabled:
+                        description: Enabled determines if this gateway instance should be deployed
+                        type: boolean
+                      image:
+                        default: cr.kgateway.dev/kgateway-dev/envoy-wrapper:v2.1.1
+                        description: Image is the container image for the gateway
+                        type: string
+                      port:
+                        default: 8080
+                        description: Port for the gateway service
+                        format: int32
+                        type: integer
+                      replicas:
+                        default: 1
+                        description: Replicas is the number of gateway pods
+                        format: int32
+                        minimum: 1
+                        type: integer
+                      resources:
+                        description: Resources defines the resource requirements
+                        properties:
+                          limits:
+                            additionalProperties:
+                              anyOf:
+                              - type: integer
+                              - type: string
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              x-kubernetes-int-or-string: true
+                            description: 'Limits describes the maximum amount of compute resources allowed.'
+                            type: object
+                          requests:
+                            additionalProperties:
+                              anyOf:
+                              - type: integer
+                              - type: string
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              x-kubernetes-int-or-string: true
+                            description: 'Requests describes the minimum amount of compute resources required.'
+                            type: object
+                        type: object
+                    type: object
+                type: object
+              loadBalancing:
+                description: LoadBalancing configuration (optional)
+                type: object
+                properties:
+                  algorithm:
+                    default: ROUND_ROBIN
+                    description: Algorithm specifies the load balancing algorithm
+                    enum:
+                    - ROUND_ROBIN
+                    - LEAST_REQUEST
+                    - RANDOM
+                    - LEAST_CONN
+                    type: string
+                  connectionPool:
+                    description: ConnectionPool settings
+                    properties:
+                      http1MaxPendingRequests:
+                        default: 1
+                        description: HTTP1MaxPendingRequests
+                        format: int32
+                        type: integer
+                      maxRequestsPerConnection:
+                        default: 1
+                        description: MaxRequestsPerConnection
+                        format: int32
+                        type: integer
+                    type: object
+                  enabled:
+                    description: Enabled determines if custom load balancing should be configured
+                    type: boolean
+              prefill:
+                description: Prefill stage configuration
+                properties:
+                  args:
+                    description: Args are additional arguments to pass to the container
+                    items:
+                      type: string
+                    type: array
+                  enabled:
+                    description: Enabled determines if this stage should be deployed
+                    type: boolean
+                  image:
+                    description: Image is the container image for this stage
+                    type: string
+                  port:
+                    default: 8200
+                    description: Port for the service
+                    format: int32
+                    type: integer
+                  replicas:
+                    default: 2
+                    description: Replicas is the number of pods for this stage
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  resources:
+                    description: Resources defines the resource requirements
+                    properties:
+                      limits:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: 'Limits describes the maximum amount of compute resources allowed.'
+                        type: object
+                      requests:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: 'Requests describes the minimum amount of compute resources required.'
+                        type: object
+                    type: object
+                type: object
+                type: object
+              replicas:
+                default: 2
+                description: Replicas is the number of simulator pods to run
+                format: int32
+                minimum: 1
+                type: integer
+              resources:
+                description: Resources defines the resource requirements for simulator pods
+                properties:
+                  limits:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: 'Limits describes the maximum amount of compute resources allowed.'
+                    type: object
+                  requests:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: 'Requests describes the minimum amount of compute resources required.'
+                    type: object
+                type: object
+              service:
+                description: Service configuration
+                properties:
+                  name:
+                    default: gaie-inference-scheduling-proxy
+                    description: Name of the service
+                    type: string
+                  port:
+                    default: 8200
+                    description: Port for the service
+                    format: int32
+                    type: integer
+                  type:
+                    default: ClusterIP
+                    description: Type of service (ClusterIP, LoadBalancer, NodePort)
+                    type: string
+                type: object
+            type: object
+          status:
+            description: SimulatorDeploymentStatus defines the observed state of SimulatorDeployment
+            properties:
+              conditions:
+                description: Conditions represent the latest available observations
+                items:
+                  description: Condition contains details for one aspect of the current state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: lastTransitionTime is the last time the condition transitioned from one status to another.
+                      format: date-time
+                      type: string
+                    message:
+                      description: message is a human readable message indicating details about the transition.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: observedGeneration represents the .metadata.generation that the condition was set based upon.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              endpoints:
+                description: Endpoints lists the service endpoints
+                items:
+                  type: string
+                type: array
+              gatewayURL:
+                description: GatewayURL is the external URL for the gateway
+                type: string
+              readyReplicas:
+                description: ReadyReplicas is the number of ready replicas
+                format: int32
+                type: integer
+              replicas:
+                description: Replicas is the current number of replicas
+                format: int32
+                type: integer
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    additionalPrinterColumns:
+    - name: Replicas
+      type: integer
+      jsonPath: .status.replicas
+    - name: Ready
+      type: integer
+      jsonPath: .status.readyReplicas
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp
