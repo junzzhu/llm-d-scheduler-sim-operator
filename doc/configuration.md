@@ -90,3 +90,35 @@ Use the curated samples in `config/samples`:
 | **Backend** | Service Port | 8200 | Simulator backend port |
 | **EPP** | Service Port | 8100 | Endpoint Picker port |
 | **EPP** | Health Port | 9003 | EPP liveness/readiness |
+
+## Simulator Metrics
+
+The simulator exposes Prometheus metrics on the HTTP port (default 8200) at `/metrics`.
+
+### Option A: Port-forward the proxy Service
+
+```bash
+kubectl port-forward -n ${NS_SIM} svc/gaie-inference-scheduling-proxy 18200:8200
+curl http://localhost:18200/metrics
+```
+
+Expected output (example):
+```
+vllm:time_per_output_token_seconds_bucket{model_name="random",le="+Inf"} 15
+vllm:time_per_output_token_seconds_sum{model_name="random"} 0
+vllm:time_per_output_token_seconds_count{model_name="random"} 15
+# HELP vllm:time_to_first_token_seconds Histogram of time to first token in seconds.
+# TYPE vllm:time_to_first_token_seconds histogram
+vllm:time_to_first_token_seconds_bucket{model_name="random",le="0.001"} 4
+vllm:time_to_first_token_seconds_bucket{model_name="random",le="0.005"} 4
+```
+
+### Option B: Port-forward a specific decode pod
+
+```bash
+kubectl get pods -n ${NS_SIM} -l llm-d.ai/role=decode
+kubectl port-forward -n ${NS_SIM} pod/<decode-pod> 18200:8200
+curl http://localhost:18200/metrics
+```
+
+If `/metrics` returns 404, check simulator logs to confirm metrics are enabled for the image and configuration in use.
