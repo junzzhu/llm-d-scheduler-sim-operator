@@ -48,6 +48,11 @@ spec:
                     description: Port for the service
                     format: int32
                     type: integer
+                  logVerbosity:
+                    default: 5
+                    description: LogVerbosity sets klog verbosity level for this stage
+                    format: int32
+                    type: integer
                   replicas:
                     default: 2
                     description: Replicas is the number of pods for this stage
@@ -140,6 +145,11 @@ spec:
                 default: ghcr.io/llm-d/llm-d-simulator:latest
                 description: Image is the container image for the simulator
                 type: string
+              logVerbosity:
+                default: 5
+                description: LogVerbosity sets klog verbosity level for simulator pods
+                format: int32
+                type: integer
               inferenceGateway:
                 description: InferenceGateway configuration
                 properties:
@@ -282,6 +292,11 @@ spec:
                   port:
                     default: 8200
                     description: Port for the service
+                    format: int32
+                    type: integer
+                  logVerbosity:
+                    default: 5
+                    description: LogVerbosity sets klog verbosity level for this stage
                     format: int32
                     type: integer
                   replicas:

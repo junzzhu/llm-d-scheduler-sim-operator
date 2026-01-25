@@ -24,6 +24,21 @@ func stringPtr(s string) *string {
 	return &s
 }
 
+func (r *SimulatorDeploymentReconciler) buildSimulatorArgs(verbosity int32, port int32, extraArgs []string) []string {
+	args := []string{
+		"--model", "random",
+		"--mode", "random",
+	}
+	if verbosity > 0 {
+		args = append(args, "--v", fmt.Sprintf("%d", verbosity))
+	}
+	args = append(args, "--port", fmt.Sprintf("%d", port))
+	if len(extraArgs) > 0 {
+		args = append(args, extraArgs...)
+	}
+	return args
+}
+
 // SimulatorDeploymentReconciler reconciles a SimulatorDeployment object
 type SimulatorDeploymentReconciler struct {
 	client.Client
@@ -137,6 +152,9 @@ func (r *SimulatorDeploymentReconciler) setDefaults(simDep *simv1alpha1.Simulato
 	if simDep.Spec.Service.Type == "" {
 		simDep.Spec.Service.Type = corev1.ServiceTypeClusterIP
 	}
+	if simDep.Spec.LogVerbosity == 0 {
+		simDep.Spec.LogVerbosity = 5
+	}
 }
 
 func (r *SimulatorDeploymentReconciler) reconcileDeployment(ctx context.Context, simDep *simv1alpha1.SimulatorDeployment) error {
@@ -172,11 +190,7 @@ func (r *SimulatorDeploymentReconciler) reconcileDeployment(ctx context.Context,
 							Name:            "decode",
 							Image:           simDep.Spec.Image,
 							ImagePullPolicy: corev1.PullNever, // Use local image only
-							Args: []string{
-								"--model", "random",
-								"--mode", "random",
-								"--port", fmt.Sprintf("%d", simDep.Spec.Service.Port),
-							},
+							Args: r.buildSimulatorArgs(simDep.Spec.LogVerbosity, simDep.Spec.Service.Port, nil),
 							Ports: []corev1.ContainerPort{
 								{
 									Name:          "http",
@@ -991,14 +1005,11 @@ func (r *SimulatorDeploymentReconciler) reconcileStage(ctx context.Context, simD
 	}
 
 	// Build container args
-	args := []string{
-		"--model", "random",
-		"--mode", "random",
-		"--port", fmt.Sprintf("%d", config.Port),
+	verbosity := config.LogVerbosity
+	if verbosity == 0 {
+		verbosity = simDep.Spec.LogVerbosity
 	}
-	if len(config.Args) > 0 {
-		args = append(args, config.Args...)
-	}
+	args := r.buildSimulatorArgs(verbosity, config.Port, config.Args)
 
 	// Create Stage Deployment
 	deployment := &appsv1.Deployment{

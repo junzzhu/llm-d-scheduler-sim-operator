@@ -16,6 +16,10 @@ type SimulatorDeploymentSpec struct {
 	// +kubebuilder:default="ghcr.io/llm-d/llm-d-simulator:latest"
 	Image string `json:"image,omitempty"`
 
+	// LogVerbosity sets klog verbosity level for simulator pods
+	// +kubebuilder:default=5
+	LogVerbosity int32 `json:"logVerbosity,omitempty"`
+
 	// Resources defines the resource requirements for simulator pods
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 
@@ -133,6 +137,10 @@ type StageConfig struct {
 	// Port for the service
 	// +kubebuilder:default=8200
 	Port int32 `json:"port,omitempty"`
+
+	// LogVerbosity sets klog verbosity level for this stage
+	// +kubebuilder:default=5
+	LogVerbosity int32 `json:"logVerbosity,omitempty"`
 
 	// Resources defines the resource requirements
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`

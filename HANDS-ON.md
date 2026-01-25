@@ -1,11 +1,12 @@
 # Hands-On: Deploying LLM-D Stack with Operator
 
-This guide provides the minimal steps to deploy the complete llm-d inference stack (Scheduler, Gateway, Prefill/Decode Simulators) using the operator.
+This guide provides the minimal steps to deploy the llm-d inference stack (Scheduler, Gateway, Prefill/Decode Simulators) using the operator.
 
 ## Prerequisites
 
 1.  **Kubernetes Cluster**: Accessible via `kubectl`.
 2.  **Operator Repository**: Cloned locally.
+3.  **[llm-d-inference-scheduler](https://github.com/llm-d/llm-d-inference-scheduler)** Cloned locally as a sibling repo for above.
 
 ```bash
 cd llm-d-scheduler-sim-operator
@@ -32,11 +33,8 @@ make install
 kubectl get crd simulatordeployments.sim.llm-d.io
 kubectl get crd schedulerinstalls.sim.llm-d.io
 
-# 2. Set up RBAC for EPP (Critical)
-./hack/create-epp-rbac.sh
-
-# 3. Deploy Operator with fixes
-./hack/redeploy-with-fixes.sh
+# 2. Set up RBAC for EPP
+./script/create-epp-rbac.sh
 ```
 
 *Wait for the operator to initialize.*
@@ -50,15 +48,16 @@ kubectl apply -k ../llm-d-inference-scheduler/deploy/components/crds-gateway-api
 kubectl api-resources | rg -i "gateway|httproute|referencegrant"
 ```
 
-## Step 4: Deploy the Simulator Stack
+## Step 4: Deploy the Simulator and Scheduler Stack
 
 Apply the full stack configuration. This single CR creates the EPP, Gateway, and Simulator pods.
 
 ```bash
 kubectl apply -f config/samples/sim_v1alpha1_simulatordeployment_full.yaml
-```
 
-## Step 5: Deploy the Scheduler Stack (SchedulerInstall)
+# Deploy Operator with fixes (optional, if necessary)
+./script/redeploy-with-fixes.sh
+```
 
 This creates the scheduler EPP, Gateway API Gateway, HTTPRoute, ReferenceGrant, proxy Service, and (optional) DestinationRule.
 
@@ -66,7 +65,13 @@ This creates the scheduler EPP, Gateway API Gateway, HTTPRoute, ReferenceGrant, 
 kubectl apply -f config/samples/sim_v1alpha1_schedulerinstall.yaml
 ```
 
-## Step 6: Verify Deployment
+Start operator.
+
+```bash
+./bin/manager > /tmp/operator.log
+```
+
+## Step 5: Verify Deployment
 
 Wait for all pods to be ready:
 
@@ -83,7 +88,7 @@ kubectl get pods -n llm-d-inference-scheduler -w
 - `gaie-inference-scheduling-epp`: **Running**
 - `infra-inference-scheduling-inference-gateway-istio`: **Running**
 
-## Step 7: Test Connectivity
+## Step 6: Test Connectivity
 
 ### Method A: Scheduler Gateway (Recommended)
 Forward the scheduler gateway and send inference requests through it.
@@ -91,13 +96,13 @@ Forward the scheduler gateway and send inference requests through it.
 1.  **Start Port-Forward:**
     ```bash
     kubectl port-forward svc/infra-inference-scheduling-inference-gateway-istio \
-      8080:80 -n llm-d-inference-scheduler
+      18080:80 -n llm-d-inference-scheduler
     ```
 
 2.  **Run Test (In new terminal):**
     ```bash
     # Test inference
-    curl -X POST http://localhost:8080/v1/completions \
+    curl -X POST http://localhost:18080/v1/completions \
       -H "Content-Type: application/json" \
       -d '{"model": "random", "prompt": "test", "max_tokens": 5}'
     ```
@@ -111,79 +116,46 @@ Forward the scheduler gateway and send inference requests through it.
 If you want to bypass the scheduler and hit the simulator gateway directly:
 
 ```bash
-kubectl port-forward svc/infra-sim-inference-gateway 8080:8080 -n llm-d-sim
+kubectl port-forward svc/infra-sim-inference-gateway 18081:8080 -n llm-d-sim
 ```
 
-## Troubleshooting
+## Round-robin scheduling: verify distribution across decode pods
 
-### 1) `kubectl get gateway,httproute` shows nothing
-Gateway API CRDs are not installed.
+This test verifies that Istio is using ROUND_ROBIN (instead of the LEAST_REQUEST) in our setup for the proxy Service and requests are distributed across decode pods. Expect **both decode pods** to receive traffic. Due to HTTP keep-alive, the distribution may not be perfectly alternating; the key signal is that **both pods log requests over time**.
+
+Verify the DestinationRule load balancer policy is `ROUND_ROBIN`:
 
 ```bash
-kubectl apply -k ../llm-d-inference-scheduler/deploy/components/crds-gateway-api
+kubectl get destinationrule -n llm-d-sim -o jsonpath='{.items[*].spec.trafficPolicy.loadBalancer}'
+{"simple":"ROUND_ROBIN"}
 ```
-
-### 2) Gateway shows `PROGRAMMED: False`
-Often caused by missing GatewayClass controller or mismatched class name.
-
-```bash
-kubectl get gatewayclass
-kubectl describe gateway -n llm-d-inference-scheduler infra-inference-scheduling-inference-gateway
-```
-
-The default class for `SchedulerInstall` is `istio`. If your cluster only has `kgateway`, set:
-```yaml
-spec:
-  gateway:
-    className: kgateway
-```
-
-### 3) `no healthy upstream` from gateway
-The proxy Service is missing endpoints or the HTTPRoute/ReferenceGrant is misconfigured.
 
 ```bash
 kubectl get endpointslice -n llm-d-sim \
   -l kubernetes.io/service-name=gaie-inference-scheduling-proxy
-kubectl get httproute -n llm-d-inference-scheduler -o yaml
-kubectl get referencegrant -n llm-d-sim -o yaml
+NAME                                    ADDRESSTYPE   PORTS   ENDPOINTS                   AGE
+gaie-inference-scheduling-proxy-rll2v   IPv4          8200    10.244.0.247,10.244.0.248   18m
+
+kubectl get pods -n ${NS_SIM} -l llm-d.ai/role=decode
+NAME                                                READY   STATUS    RESTARTS   AGE
+ms-sim-llm-d-modelservice-decode-6dd4d89c5d-jxgrv   1/1     Running   0          15m
+ms-sim-llm-d-modelservice-decode-6dd4d89c5d-r6hjn   1/1     Running   0          15m
+
+kubectl logs ms-sim-llm-d-modelservice-decode-6dd4d89c5d-jxgrv -n ${NS_SIM} -f | rg worker
+kubectl logs ms-sim-llm-d-modelservice-decode-6dd4d89c5d-r6hjn -n ${NS_SIM} -f | rg worker
 ```
 
-### 4) Check if round-robin is active (Istio)
-Verify the DestinationRule load balancer policy:
-```bash
-kubectl get destinationrule -n llm-d-sim -o jsonpath='{.items[*].spec.trafficPolicy.loadBalancer}'
-```
+Expected behavior, with following client requests:
+- Both decode pod logs show request handling lines after sending traffic.
+- If only one pod logs requests, check keep-alive settings or the DestinationRule.
 
-Check the specific rule used by the proxy service:
 ```bash
-kubectl get destinationrule gaie-inference-scheduling-proxy-lb -n llm-d-sim \
-  -o jsonpath='{.spec.trafficPolicy.loadBalancer}'
-```
-
-If you want to force round-robin explicitly:
-```bash
-cat <<EOF | kubectl apply -f -
-apiVersion: networking.istio.io/v1beta1
-kind: DestinationRule
-metadata:
-  name: gaie-inference-scheduling-proxy-lb
-  namespace: llm-d-sim
-spec:
-  host: gaie-inference-scheduling-proxy.llm-d-sim.svc.cluster.local
-  trafficPolicy:
-    loadBalancer:
-      simple: ROUND_ROBIN
-    connectionPool:
-      http:
-        http1MaxPendingRequests: 1
-        maxRequestsPerConnection: 1
-EOF
-```
-
-### 5) Scheduler EPP crashes (RBAC)
-Ensure EPP has permissions for InferencePools and InferenceObjectives:
-```bash
-kubectl get role,rolebinding -n llm-d-sim | rg gaie-inference-scheduling-epp
+for i in {1..8}; do
+  curl -X POST http://localhost:18080/v1/completions \
+    -H "Content-Type: application/json" \
+    -d '{"model": "random", "prompt": "test", "max_tokens": 5}'
+  sleep 0.5
+done
 ```
 
 ## Clean Up
