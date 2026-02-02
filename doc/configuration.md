@@ -32,7 +32,12 @@ Use the curated samples in `config/samples`:
 | `replicas` | int32 | 1 | Number of EPP pods |
 | `image` | string | `ghcr.io/llm-d/llm-d-inference-scheduler:v0.4.0` | EPP container image |
 | `port` | int32 | 8100 | EPP service port |
+| `verbosity` | int32 | 1 | EPP log verbosity (maps to `--v`) |
+| `args` | []string | - | Additional EPP container arguments |
 | `resources` | ResourceRequirements | - | CPU/memory requests and limits |
+
+Note: The EPP gRPC server listens on the configured `port`. Ensure the Service
+port matches the gRPC port you expect Envoy/ext_proc to connect to.
 
 ## InferenceGatewayConfig
 
@@ -63,6 +68,55 @@ Use the curated samples in `config/samples`:
 | `logVerbosity` | int32 | 5 | klog verbosity for this stage |
 | `resources` | ResourceRequirements | - | CPU/memory requests and limits |
 | `args` | []string | - | Additional container arguments |
+
+## SchedulerInstallSpec
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `schedulerNamespace` | string | CR namespace | Namespace for scheduler components |
+| `simulatorNamespace` | string | - | Namespace for simulator backends |
+| `proxyService` | ProxyServiceConfig | - | Proxy Service configuration |
+| `epp` | SchedulerEPPConfig | - | EPP configuration |
+| `gateway` | SchedulerGatewayConfig | - | Gateway configuration |
+| `routing` | SchedulerRoutingConfig | - | HTTPRoute + ReferenceGrant configuration |
+| `destinationRule` | LoadBalancingConfig | - | Istio DestinationRule configuration |
+| `envoyFilter` | SchedulerEnvoyFilterConfig | - | EnvoyFilter ext_proc configuration |
+
+## SchedulerRoutingConfig
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | false | Enable HTTPRoute + ReferenceGrant |
+| `backendType` | string | `Service` | Backend type: `Service` or `InferencePool` |
+| `inferencePool` | InferencePoolRef | - | InferencePool reference when `backendType=InferencePool` |
+| `httpRouteName` | string | `llm-d-inference-scheduling` | HTTPRoute name |
+| `parentGateway` | GatewayRef | - | Parent Gateway reference |
+
+## SchedulerEPPConfig
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | false | Enable EPP deployment |
+| `name` | string | `gaie-inference-scheduling-epp` | EPP deployment/service name |
+| `replicas` | int32 | 1 | Number of EPP pods |
+| `image` | string | `ghcr.io/llm-d/llm-d-inference-scheduler:v0.4.0` | EPP container image |
+| `port` | int32 | 9002 | EPP service port |
+| `verbosity` | int32 | 1 | EPP log verbosity (maps to `--v`) |
+| `args` | []string | - | Additional EPP container arguments |
+| `poolName` | string | `gaie-inference-scheduling` | InferencePool name watched by EPP |
+| `poolNamespace` | string | simulatorNamespace | InferencePool namespace |
+| `resources` | ResourceRequirements | - | CPU/memory requests and limits |
+
+Note: The EPP gRPC server listens on the configured `port`. Ensure the Service
+port matches the gRPC port you expect Envoy/ext_proc to connect to.
+
+## InferencePoolRef
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `name` | string | - | InferencePool name |
+| `namespace` | string | simulatorNamespace | InferencePool namespace |
+| `port` | int32 | - | Port for backendRef (if required) |
 
 ## ServiceConfig
 

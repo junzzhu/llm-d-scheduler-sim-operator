@@ -117,6 +117,13 @@ type EPPConfig struct {
 	// +kubebuilder:default=8100
 	Port int32 `json:"port,omitempty"`
 
+	// Verbosity sets the EPP log verbosity level (maps to --v)
+	// +kubebuilder:default=1
+	Verbosity int32 `json:"verbosity,omitempty"`
+
+	// Args are additional arguments to pass to the EPP container
+	Args []string `json:"args,omitempty"`
+
 	// Resources defines the resource requirements for EPP pods
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 }

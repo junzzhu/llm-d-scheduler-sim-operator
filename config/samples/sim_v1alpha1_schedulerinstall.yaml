@@ -22,6 +22,9 @@ spec:
     listenerPort: 80
     listenerProtocol: HTTP
 
+  envoyFilter:
+    enabled: true
+
   proxyService:
     name: gaie-inference-scheduling-proxy
     port: 8200
@@ -33,6 +36,11 @@ spec:
   routing:
     enabled: true
     httpRouteName: llm-d-inference-scheduling
+    backendType: InferencePool
+    inferencePool:
+      name: gaie-inference-scheduling
+      namespace: llm-d-sim
+      port: 8200
     parentGateway:
       name: infra-inference-scheduling-inference-gateway
       namespace: llm-d-inference-scheduler

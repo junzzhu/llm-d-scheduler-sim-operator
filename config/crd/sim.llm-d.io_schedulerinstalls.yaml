@@ -1,6 +1,9 @@
+---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.0
   name: schedulerinstalls.sim.llm-d.io
 spec:
   group: sim.llm-d.io
@@ -14,26 +17,343 @@ spec:
   scope: Namespaced
   versions:
   - name: v1alpha1
-    served: true
-    storage: true
     schema:
       openAPIV3Schema:
         description: SchedulerInstall is the Schema for the schedulerinstalls API
-        type: object
         properties:
           apiVersion:
-            description: API version of the object
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
             type: string
           kind:
-            description: Kind of the object
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
             type: string
           metadata:
             type: object
           spec:
+            description: SchedulerInstallSpec defines the desired state of SchedulerInstall
+            properties:
+              destinationRule:
+                description: DestinationRule configuration (Istio)
+                properties:
+                  algorithm:
+                    default: ROUND_ROBIN
+                    description: Algorithm specifies the load balancing algorithm
+                    enum:
+                    - ROUND_ROBIN
+                    - LEAST_REQUEST
+                    - RANDOM
+                    - LEAST_CONN
+                    type: string
+                  connectionPool:
+                    description: ConnectionPool settings
+                    properties:
+                      http1MaxPendingRequests:
+                        default: 1
+                        description: HTTP1MaxPendingRequests
+                        format: int32
+                        type: integer
+                      maxRequestsPerConnection:
+                        default: 1
+                        description: MaxRequestsPerConnection
+                        format: int32
+                        type: integer
+                    type: object
+                  enabled:
+                    description: Enabled determines if custom load balancing should
+                      be configured
+                    type: boolean
+                type: object
+              envoyFilter:
+                description: EnvoyFilter configuration for ext_proc (scoring)
+                properties:
+                  enabled:
+                    description: Enabled determines if the EnvoyFilter should be created
+                    type: boolean
+                  name:
+                    default: epp-ext-proc
+                    description: Name of the EnvoyFilter
+                    type: string
+                  workloadSelector:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      WorkloadSelector labels to match the Gateway pod
+                      Defaults to matching the gateway name if not provided
+                    type: object
+                type: object
+              epp:
+                description: EPP (Endpoint Picker) configuration for the scheduler
+                  namespace
+                properties:
+                  enabled:
+                    description: Enabled determines if EPP should be deployed
+                    type: boolean
+                  image:
+                    default: ghcr.io/llm-d/llm-d-inference-scheduler:v0.4.0
+                    description: Image is the container image for EPP
+                    type: string
+                  name:
+                    default: gaie-inference-scheduling-epp
+                    description: Name of the EPP deployment/service
+                    type: string
+                  poolName:
+                    default: gaie-inference-scheduling
+                    description: PoolName is the InferencePool name EPP watches
+                    type: string
+                  poolNamespace:
+                    description: PoolNamespace is the namespace of the InferencePool
+                    type: string
+                  port:
+                    default: 9002
+                    description: Port for the EPP service
+                    format: int32
+                    type: integer
+                  verbosity:
+                    default: 1
+                    description: Verbosity sets the EPP log verbosity level (maps to --v)
+                    format: int32
+                    type: integer
+                  args:
+                    description: Args are additional arguments to pass to the EPP container
+                    items:
+                      type: string
+                    type: array
+                  replicas:
+                    default: 1
+                    description: Replicas is the number of EPP pods
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  resources:
+                    description: Resources defines the resource requirements for EPP
+                      pods
+                    properties:
+                      claims:
+                        description: |-
+                          Claims lists the names of resources, defined in spec.resourceClaims,
+                          that are used by this container.
+
+                          This is an alpha field and requires enabling the
+                          DynamicResourceAllocation feature gate.
+
+                          This field is immutable. It can only be set for containers.
+                        items:
+                          description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                          properties:
+                            name:
+                              description: |-
+                                Name must match the name of one entry in pod.spec.resourceClaims of
+                                the Pod where this field is used. It makes that resource available
+                                inside a container.
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                      limits:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Limits describes the maximum amount of compute resources allowed.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                      requests:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Requests describes the minimum amount of compute resources required.
+                          If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                          otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                    type: object
+                type: object
+              gateway:
+                description: Gateway configuration (Gateway API)
+                properties:
+                  className:
+                    default: istio
+                    description: ClassName is the GatewayClass name
+                    type: string
+                  enabled:
+                    description: Enabled determines if the Gateway should be created
+                    type: boolean
+                  listenerPort:
+                    default: 80
+                    description: ListenerPort is the Gateway listener port
+                    format: int32
+                    type: integer
+                  listenerProtocol:
+                    default: HTTP
+                    description: ListenerProtocol is the Gateway listener protocol
+                    type: string
+                  name:
+                    default: infra-inference-scheduling-inference-gateway
+                    description: Name of the Gateway
+                    type: string
+                type: object
+              proxyService:
+                description: ProxyService defines the proxy Service that fronts simulator
+                  backends
+                properties:
+                  name:
+                    default: gaie-inference-scheduling-proxy
+                    description: Name of the Service
+                    type: string
+                  port:
+                    default: 8200
+                    description: Port exposed by the Service
+                    format: int32
+                    type: integer
+                  selector:
+                    additionalProperties:
+                      type: string
+                    description: Selector to match simulator backend pods
+                    type: object
+                  targetPort:
+                    default: 8200
+                    description: TargetPort on backend pods
+                    format: int32
+                    type: integer
+                type: object
+              routing:
+                description: Routing configuration (HTTPRoute + ReferenceGrant)
+                properties:
+                  backendType:
+                    default: Service
+                    description: BackendType selects the HTTPRoute backend ("Service"
+                      or "InferencePool")
+                    enum:
+                    - Service
+                    - InferencePool
+                    type: string
+                  enabled:
+                    description: Enabled determines if routing resources should be
+                      created
+                    type: boolean
+                  httpRouteName:
+                    default: llm-d-inference-scheduling
+                    description: HTTPRouteName is the name of the HTTPRoute
+                    type: string
+                  inferencePool:
+                    description: InferencePool references an InferencePool backend
+                      when BackendType=InferencePool
+                    properties:
+                      name:
+                        description: Name of the InferencePool
+                        type: string
+                      namespace:
+                        description: Namespace of the InferencePool
+                        type: string
+                      port:
+                        description: Port to use for the backendRef, if required by
+                          the API
+                        format: int32
+                        type: integer
+                    type: object
+                  parentGateway:
+                    description: ParentGateway references the Gateway for the HTTPRoute
+                    properties:
+                      name:
+                        description: Name of the Gateway
+                        type: string
+                      namespace:
+                        description: Namespace of the Gateway
+                        type: string
+                    type: object
+                type: object
+              schedulerNamespace:
+                description: SchedulerNamespace is the namespace where scheduler components
+                  run
+                type: string
+              simulatorNamespace:
+                description: SimulatorNamespace is the namespace where simulator backends
+                  run
+                type: string
             type: object
-            x-kubernetes-preserve-unknown-fields: true
           status:
+            description: SchedulerInstallStatus defines the observed state of SchedulerInstall
+            properties:
+              conditions:
+                description: Conditions represent the latest available observations
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
             type: object
-            x-kubernetes-preserve-unknown-fields: true
+        type: object
+    served: true
+    storage: true
     subresources:
       status: {}

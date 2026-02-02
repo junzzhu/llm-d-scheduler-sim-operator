@@ -3,6 +3,7 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -37,7 +38,7 @@ type SchedulerInstallReconciler struct {
 //+kubebuilder:rbac:groups=core,resources=services;configmaps;serviceaccounts,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles;rolebindings,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways;httproutes;referencegrants,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=networking.istio.io,resources=destinationrules,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=networking.istio.io,resources=destinationrules;envoyfilters,verbs=get;list;watch;create;update;patch;delete
 
 func (r *SchedulerInstallReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
@@ -73,6 +74,11 @@ func (r *SchedulerInstallReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	}
 
 	if install.Spec.Routing != nil && install.Spec.Routing.Enabled {
+		if install.Spec.Routing.BackendType == "InferencePool" {
+			if install.Spec.Routing.InferencePool == nil || install.Spec.Routing.InferencePool.Name == "" {
+				return ctrl.Result{}, fmt.Errorf("routing.backendType=InferencePool requires routing.inferencePool.name")
+			}
+		}
 		if err := r.reconcileReferenceGrant(ctx, install); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -83,6 +89,22 @@ func (r *SchedulerInstallReconciler) Reconcile(ctx context.Context, req ctrl.Req
 
 	if install.Spec.DestinationRule != nil && install.Spec.DestinationRule.Enabled {
 		if err := r.reconcileDestinationRule(ctx, install); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
+	if install.Spec.EnvoyFilter != nil && install.Spec.EnvoyFilter.Enabled {
+		if install.Spec.EPP == nil || !install.Spec.EPP.Enabled {
+			return ctrl.Result{}, fmt.Errorf("envoyFilter requires epp.enabled=true")
+		}
+		if len(install.Spec.EnvoyFilter.WorkloadSelector) == 0 {
+			return ctrl.Result{}, fmt.Errorf("envoyFilter requires workloadSelector (or gateway configured for default selector)")
+		}
+		if err := r.reconcileEnvoyFilter(ctx, install); err != nil {
+			return ctrl.Result{}, err
+		}
+	} else if install.Spec.EnvoyFilter != nil && !install.Spec.EnvoyFilter.Enabled {
+		if err := r.deleteEnvoyFilter(ctx, install); err != nil {
 			return ctrl.Result{}, err
 		}
 	}
@@ -152,6 +174,9 @@ func (r *SchedulerInstallReconciler) setDefaults(install *simv1alpha1.SchedulerI
 	}
 
 	if install.Spec.Routing != nil {
+		if install.Spec.Routing.BackendType == "" {
+			install.Spec.Routing.BackendType = "Service"
+		}
 		if install.Spec.Routing.HTTPRouteName == "" {
 			install.Spec.Routing.HTTPRouteName = "llm-d-inference-scheduling"
 		}
@@ -161,6 +186,21 @@ func (r *SchedulerInstallReconciler) setDefaults(install *simv1alpha1.SchedulerI
 		if install.Spec.Routing.ParentGateway.Namespace == "" {
 			install.Spec.Routing.ParentGateway.Namespace = install.Spec.SchedulerNamespace
 		}
+		if install.Spec.Routing.BackendType == "InferencePool" {
+			if install.Spec.Routing.InferencePool == nil {
+				install.Spec.Routing.InferencePool = &simv1alpha1.InferencePoolRef{}
+			}
+			if install.Spec.Routing.InferencePool.Name == "" && install.Spec.EPP != nil {
+				install.Spec.Routing.InferencePool.Name = install.Spec.EPP.PoolName
+			}
+			if install.Spec.Routing.InferencePool.Namespace == "" {
+				if install.Spec.EPP != nil && install.Spec.EPP.PoolNamespace != "" {
+					install.Spec.Routing.InferencePool.Namespace = install.Spec.EPP.PoolNamespace
+				} else {
+					install.Spec.Routing.InferencePool.Namespace = install.Spec.SimulatorNamespace
+				}
+			}
+		}
 	}
 
 	if install.Spec.DestinationRule != nil {
@@ -169,8 +209,19 @@ func (r *SchedulerInstallReconciler) setDefaults(install *simv1alpha1.SchedulerI
 		}
 		if install.Spec.DestinationRule.ConnectionPool == nil {
 			install.Spec.DestinationRule.ConnectionPool = &simv1alpha1.ConnectionPoolConfig{
-				HTTP1MaxPendingRequests: 1,
+				HTTP1MaxPendingRequests:  1,
 				MaxRequestsPerConnection: 1,
+			}
+		}
+	}
+
+	if install.Spec.EnvoyFilter != nil {
+		if install.Spec.EnvoyFilter.Name == "" {
+			install.Spec.EnvoyFilter.Name = "epp-ext-proc"
+		}
+		if len(install.Spec.EnvoyFilter.WorkloadSelector) == 0 && install.Spec.Gateway != nil {
+			install.Spec.EnvoyFilter.WorkloadSelector = map[string]string{
+				"gateway.networking.k8s.io/gateway-name": install.Spec.Gateway.Name,
 			}
 		}
 	}
@@ -225,6 +276,11 @@ func (r *SchedulerInstallReconciler) reconcileEPPRBAC(ctx context.Context, insta
 				APIGroups: []string{""},
 				Resources: []string{"pods", "services", "endpoints"},
 				Verbs:     []string{"get", "list", "watch"},
+			},
+			{
+				APIGroups: []string{"inference.networking.k8s.io"},
+				Resources: []string{"inferencepools", "inferenceobjectives"},
+				Verbs:     []string{"get", "list", "watch", "update", "patch"},
 			},
 			{
 				APIGroups: []string{"inference.networking.x-k8s.io"},
@@ -335,31 +391,46 @@ func (r *SchedulerInstallReconciler) reconcileEPPDeployment(ctx context.Context,
 		deployment.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels}
 		deployment.Spec.Template.ObjectMeta.Labels = labels
 		deployment.Spec.Template.Spec.ServiceAccountName = epp.Name
+		verbosity := epp.Verbosity
+		if verbosity == 0 {
+			verbosity = 1
+		}
+		grpcPort := epp.Port
+		if grpcPort == 0 {
+			grpcPort = 9002
+		}
+		healthPort := grpcPort + 1
+		args := []string{
+			"--pool-name", epp.PoolName,
+			"--pool-namespace", epp.PoolNamespace,
+			"--pool-group", "inference.networking.k8s.io",
+			"--zap-encoder", "json",
+			"--config-file", "/etc/epp/epp-config.yaml",
+			"--kv-cache-usage-percentage-metric", "vllm:kv_cache_usage_perc",
+			"--secure-serving=false",
+			"--grpc-port", strconv.Itoa(int(grpcPort)),
+			"--grpc-health-port", strconv.Itoa(int(healthPort)),
+			"--v", strconv.Itoa(int(verbosity)),
+			"--tracing=false",
+		}
+		if len(epp.Args) > 0 {
+			args = append(args, epp.Args...)
+		}
+
 		deployment.Spec.Template.Spec.Containers = []corev1.Container{
 			{
 				Name:            "epp",
 				Image:           epp.Image,
 				ImagePullPolicy: corev1.PullIfNotPresent,
-				Args: []string{
-					"--pool-name", epp.PoolName,
-					"--pool-namespace", epp.PoolNamespace,
-					"--pool-group", "inference.networking.x-k8s.io",
-					"--zap-encoder", "json",
-					"--config-file", "/etc/epp/epp-config.yaml",
-					"--kv-cache-usage-percentage-metric", "vllm:kv_cache_usage_perc",
-					"--grpc-port", "9002",
-					"--grpc-health-port", "9003",
-					"--v", "1",
-					"--tracing=false",
-				},
+				Args:            args,
 				Ports: []corev1.ContainerPort{
-					{Name: "grpc", ContainerPort: 9002, Protocol: corev1.ProtocolTCP},
-					{Name: "grpc-health", ContainerPort: 9003, Protocol: corev1.ProtocolTCP},
+					{Name: "grpc", ContainerPort: grpcPort, Protocol: corev1.ProtocolTCP},
+					{Name: "grpc-health", ContainerPort: healthPort, Protocol: corev1.ProtocolTCP},
 					{Name: "metrics", ContainerPort: 9090, Protocol: corev1.ProtocolTCP},
 				},
 				LivenessProbe: &corev1.Probe{
 					ProbeHandler: corev1.ProbeHandler{
-						TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt(9003)},
+						TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt(int(healthPort))},
 					},
 					InitialDelaySeconds: 5,
 					PeriodSeconds:       10,
@@ -369,7 +440,7 @@ func (r *SchedulerInstallReconciler) reconcileEPPDeployment(ctx context.Context,
 				},
 				ReadinessProbe: &corev1.Probe{
 					ProbeHandler: corev1.ProbeHandler{
-						TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt(9003)},
+						TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt(int(healthPort))},
 					},
 					PeriodSeconds:    2,
 					TimeoutSeconds:   1,
@@ -496,12 +567,33 @@ func (r *SchedulerInstallReconciler) reconcileHTTPRoute(ctx context.Context, ins
 	}
 
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, route, func() error {
+		backendRef := map[string]interface{}{
+			"group":     "",
+			"kind":      "Service",
+			"name":      install.Spec.ProxyService.Name,
+			"namespace": install.Spec.SimulatorNamespace,
+			"port":      int64(install.Spec.ProxyService.Port),
+			"weight":    int64(1),
+		}
+		if install.Spec.Routing.BackendType == "InferencePool" && install.Spec.Routing.InferencePool != nil {
+			backendRef = map[string]interface{}{
+				"group":     "inference.networking.k8s.io",
+				"kind":      "InferencePool",
+				"name":      install.Spec.Routing.InferencePool.Name,
+				"namespace": install.Spec.Routing.InferencePool.Namespace,
+				"weight":    int64(1),
+			}
+			if install.Spec.Routing.InferencePool.Port != 0 {
+				backendRef["port"] = int64(install.Spec.Routing.InferencePool.Port)
+			}
+		}
+
 		spec := map[string]interface{}{
 			"parentRefs": []interface{}{
 				map[string]interface{}{
-					"group": "gateway.networking.k8s.io",
-					"kind":  "Gateway",
-					"name":  install.Spec.Routing.ParentGateway.Name,
+					"group":     "gateway.networking.k8s.io",
+					"kind":      "Gateway",
+					"name":      install.Spec.Routing.ParentGateway.Name,
 					"namespace": install.Spec.Routing.ParentGateway.Namespace,
 				},
 			},
@@ -516,14 +608,7 @@ func (r *SchedulerInstallReconciler) reconcileHTTPRoute(ctx context.Context, ins
 						},
 					},
 					"backendRefs": []interface{}{
-						map[string]interface{}{
-							"group":     "",
-							"kind":      "Service",
-							"name":      install.Spec.ProxyService.Name,
-							"namespace": install.Spec.SimulatorNamespace,
-							"port":      int64(install.Spec.ProxyService.Port),
-							"weight":    int64(1),
-						},
+						backendRef,
 					},
 					"timeouts": map[string]interface{}{
 						"backendRequest": "0s",
@@ -610,18 +695,198 @@ func (r *SchedulerInstallReconciler) reconcileDestinationRule(ctx context.Contex
 		if install.Spec.DestinationRule.ConnectionPool != nil {
 			trafficPolicy["connectionPool"] = map[string]interface{}{
 				"http": map[string]interface{}{
-					"http1MaxPendingRequests": int64(install.Spec.DestinationRule.ConnectionPool.HTTP1MaxPendingRequests),
+					"http1MaxPendingRequests":  int64(install.Spec.DestinationRule.ConnectionPool.HTTP1MaxPendingRequests),
 					"maxRequestsPerConnection": int64(install.Spec.DestinationRule.ConnectionPool.MaxRequestsPerConnection),
 				},
 			}
 		}
 		spec := map[string]interface{}{
-			"host": fmt.Sprintf("%s.%s.svc.cluster.local", install.Spec.ProxyService.Name, install.Spec.SimulatorNamespace),
+			"host":          fmt.Sprintf("%s.%s.svc.cluster.local", install.Spec.ProxyService.Name, install.Spec.SimulatorNamespace),
 			"trafficPolicy": trafficPolicy,
 		}
 		return unstructured.SetNestedField(dr.Object, spec, "spec")
 	})
 	return err
+}
+
+func (r *SchedulerInstallReconciler) reconcileEnvoyFilter(ctx context.Context, install *simv1alpha1.SchedulerInstall) error {
+	gvk := schema.GroupVersionKind{Group: "networking.istio.io", Version: "v1alpha3", Kind: "EnvoyFilter"}
+	if !r.gvkSupported(gvk) {
+		return nil
+	}
+
+	ef := &unstructured.Unstructured{}
+	ef.SetGroupVersionKind(gvk)
+	ef.SetName(install.Spec.EnvoyFilter.Name)
+	ef.SetNamespace(install.Spec.SchedulerNamespace)
+
+	// Get EPP Service to use ClusterIP (fix for DNS issues)
+	eppSvc := &corev1.Service{}
+	if err := r.Get(ctx, types.NamespacedName{Name: install.Spec.EPP.Name, Namespace: install.Spec.SchedulerNamespace}, eppSvc); err != nil {
+		return err
+	}
+	eppIP := eppSvc.Spec.ClusterIP
+	if eppIP == "" {
+		return fmt.Errorf("EPP service has no ClusterIP")
+	}
+	eppPort := install.Spec.EPP.Port
+
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, ef, func() error {
+		if ef.GetLabels() == nil {
+			ef.SetLabels(map[string]string{})
+		}
+		labels := ef.GetLabels()
+		for k, v := range r.crossNamespaceLabels(install) {
+			labels[k] = v
+		}
+		ef.SetLabels(labels)
+
+		// Set controller reference
+		if err := controllerutil.SetControllerReference(install, ef, r.Scheme); err != nil {
+			return err
+		}
+
+		spec := map[string]interface{}{}
+		if len(install.Spec.EnvoyFilter.WorkloadSelector) > 0 {
+			labels := map[string]interface{}{}
+			for k, v := range install.Spec.EnvoyFilter.WorkloadSelector {
+				labels[k] = v
+			}
+			spec["workloadSelector"] = map[string]interface{}{
+				"labels": labels,
+			}
+		}
+		spec["configPatches"] = []interface{}{
+			// Fix 1 & 4: Replace ext_proc filter, set global mode to SKIP
+			map[string]interface{}{
+				"applyTo": "HTTP_FILTER",
+				"match": map[string]interface{}{
+					"context": "GATEWAY",
+					"listener": map[string]interface{}{
+						"filterChain": map[string]interface{}{
+							"filter": map[string]interface{}{
+								"name": "envoy.filters.network.http_connection_manager",
+								"subFilter": map[string]interface{}{
+									"name": "envoy.filters.http.ext_proc",
+								},
+							},
+						},
+					},
+				},
+				"patch": map[string]interface{}{
+					"operation": "REPLACE",
+					"value": map[string]interface{}{
+						"name": "envoy.filters.http.ext_proc",
+						"typed_config": map[string]interface{}{
+							"@type": "type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor",
+							"grpc_service": map[string]interface{}{
+								"envoy_grpc": map[string]interface{}{
+									"cluster_name": "epp-cluster",
+								},
+								"timeout": "2s",
+							},
+							"processing_mode": map[string]interface{}{
+								"request_header_mode":  "SKIP",
+								"request_body_mode":    "BUFFERED",
+								"response_header_mode": "SKIP",
+								"response_body_mode":   "NONE",
+							},
+							"failure_mode_allow": true,
+						},
+					},
+				},
+			},
+			// Fix 3: Use STATIC cluster with IP
+			map[string]interface{}{
+				"applyTo": "CLUSTER",
+				"match": map[string]interface{}{
+					"context": "GATEWAY",
+				},
+				"patch": map[string]interface{}{
+					"operation": "ADD",
+					"value": map[string]interface{}{
+						"name":                   "epp-cluster",
+						"type":                   "STATIC",
+						"connect_timeout":        "2s",
+						"lb_policy":              "ROUND_ROBIN",
+						"http2_protocol_options": map[string]interface{}{},
+						"load_assignment": map[string]interface{}{
+							"cluster_name": "epp-cluster",
+							"endpoints": []interface{}{
+								map[string]interface{}{
+									"lb_endpoints": []interface{}{
+										map[string]interface{}{
+											"endpoint": map[string]interface{}{
+												"address": map[string]interface{}{
+													"socket_address": map[string]interface{}{
+														"address":    eppIP,
+														"port_value": int64(eppPort),
+													},
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			// Fix 2 & 4: Route override to SEND, body mode NONE
+			map[string]interface{}{
+				"applyTo": "HTTP_ROUTE",
+				"match": map[string]interface{}{
+					"context": "GATEWAY",
+				},
+				"patch": map[string]interface{}{
+					"operation": "MERGE",
+					"value": map[string]interface{}{
+						"typed_per_filter_config": map[string]interface{}{
+							"envoy.filters.http.ext_proc": map[string]interface{}{
+								"@type": "type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExtProcPerRoute",
+								"overrides": map[string]interface{}{
+									"grpc_service": map[string]interface{}{
+										"envoy_grpc": map[string]interface{}{
+											"cluster_name": "epp-cluster",
+										},
+									},
+									"processing_mode": map[string]interface{}{
+										"request_header_mode":  "SKIP",
+										"request_body_mode":    "BUFFERED",
+										"response_header_mode": "SKIP",
+										"response_body_mode":   "NONE",
+									},
+									"failure_mode_allow": true,
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+		return unstructured.SetNestedField(ef.Object, spec, "spec")
+	})
+	return err
+}
+
+func (r *SchedulerInstallReconciler) deleteEnvoyFilter(ctx context.Context, install *simv1alpha1.SchedulerInstall) error {
+	gvk := schema.GroupVersionKind{Group: "networking.istio.io", Version: "v1alpha3", Kind: "EnvoyFilter"}
+	if !r.gvkSupported(gvk) {
+		return nil
+	}
+	if install.Spec.EnvoyFilter == nil || install.Spec.EnvoyFilter.Name == "" {
+		return nil
+	}
+
+	ef := &unstructured.Unstructured{}
+	ef.SetGroupVersionKind(gvk)
+	ef.SetName(install.Spec.EnvoyFilter.Name)
+	ef.SetNamespace(install.Spec.SchedulerNamespace)
+
+	if err := r.Client.Delete(ctx, ef); err != nil && !errors.IsNotFound(err) {
+		return err
+	}
+	return nil
 }
 
 func (r *SchedulerInstallReconciler) updateStatus(ctx context.Context, install *simv1alpha1.SchedulerInstall, ready bool, reason, message string) error {
@@ -664,7 +929,7 @@ func (r *SchedulerInstallReconciler) gvkSupported(gvk schema.GroupVersionKind) b
 
 func (r *SchedulerInstallReconciler) crossNamespaceLabels(install *simv1alpha1.SchedulerInstall) map[string]string {
 	return map[string]string{
-		"sim.llm-d.io/schedulerInstall": install.Name,
+		"sim.llm-d.io/schedulerInstall":   install.Name,
 		"sim.llm-d.io/schedulerNamespace": install.Namespace,
 	}
 }

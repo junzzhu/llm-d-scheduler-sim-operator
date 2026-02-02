@@ -23,10 +23,10 @@ rules:
 - apiGroups: [""]
   resources: ["pods"]
   verbs: ["get", "list", "watch"]
-- apiGroups: ["inference.networking.x-k8s.io"]
+- apiGroups: ["inference.networking.k8s.io","inference.networking.x-k8s.io"]
   resources: ["inferencepools", "inferencemodels", "inferenceobjectives"]
   verbs: ["get", "list", "watch", "update", "patch"]
-- apiGroups: ["inference.networking.x-k8s.io"]
+- apiGroups: ["inference.networking.k8s.io","inference.networking.x-k8s.io"]
   resources: ["inferencepools/status", "inferencemodels/status", "inferenceobjectives/status"]
   verbs: ["get", "update", "patch"]
 ---

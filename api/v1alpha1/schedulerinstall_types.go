@@ -27,6 +27,9 @@ type SchedulerInstallSpec struct {
 
 	// DestinationRule configuration (Istio)
 	DestinationRule *LoadBalancingConfig `json:"destinationRule,omitempty"`
+
+	// EnvoyFilter configuration for ext_proc (scoring)
+	EnvoyFilter *SchedulerEnvoyFilterConfig `json:"envoyFilter,omitempty"`
 }
 
 // ProxyServiceConfig defines the Service that routes to simulator backends
@@ -68,6 +71,13 @@ type SchedulerEPPConfig struct {
 	// Port for the EPP service
 	// +kubebuilder:default=9002
 	Port int32 `json:"port,omitempty"`
+
+	// Verbosity sets the EPP log verbosity level (maps to --v)
+	// +kubebuilder:default=1
+	Verbosity int32 `json:"verbosity,omitempty"`
+
+	// Args are additional arguments to pass to the EPP container
+	Args []string `json:"args,omitempty"`
 
 	// PoolName is the InferencePool name EPP watches
 	// +kubebuilder:default="gaie-inference-scheduling"
@@ -111,10 +121,32 @@ type GatewayRef struct {
 	Namespace string `json:"namespace,omitempty"`
 }
 
+// SchedulerEnvoyFilterConfig defines EnvoyFilter configuration for ext_proc
+type SchedulerEnvoyFilterConfig struct {
+	// Enabled determines if the EnvoyFilter should be created
+	Enabled bool `json:"enabled,omitempty"`
+
+	// Name of the EnvoyFilter
+	// +kubebuilder:default="epp-ext-proc"
+	Name string `json:"name,omitempty"`
+
+	// WorkloadSelector labels to match the Gateway pod
+	// Defaults to matching the gateway name if not provided
+	WorkloadSelector map[string]string `json:"workloadSelector,omitempty"`
+}
+
 // SchedulerRoutingConfig defines HTTPRoute + ReferenceGrant configuration
 type SchedulerRoutingConfig struct {
 	// Enabled determines if routing resources should be created
 	Enabled bool `json:"enabled,omitempty"`
+
+	// BackendType selects the HTTPRoute backend ("Service" or "InferencePool")
+	// +kubebuilder:default="Service"
+	// +kubebuilder:validation:Enum=Service;InferencePool
+	BackendType string `json:"backendType,omitempty"`
+
+	// InferencePool references an InferencePool backend when BackendType=InferencePool
+	InferencePool *InferencePoolRef `json:"inferencePool,omitempty"`
 
 	// HTTPRouteName is the name of the HTTPRoute
 	// +kubebuilder:default="llm-d-inference-scheduling"
@@ -122,6 +154,18 @@ type SchedulerRoutingConfig struct {
 
 	// ParentGateway references the Gateway for the HTTPRoute
 	ParentGateway GatewayRef `json:"parentGateway,omitempty"`
+}
+
+// InferencePoolRef identifies an InferencePool backend
+type InferencePoolRef struct {
+	// Name of the InferencePool
+	Name string `json:"name,omitempty"`
+
+	// Namespace of the InferencePool
+	Namespace string `json:"namespace,omitempty"`
+
+	// Port to use for the backendRef, if required by the API
+	Port int32 `json:"port,omitempty"`
 }
 
 // SchedulerInstallStatus defines the observed state of SchedulerInstall

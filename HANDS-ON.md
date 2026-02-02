@@ -4,9 +4,11 @@ This guide provides the minimal steps to deploy the llm-d inference stack (Sched
 
 ## Prerequisites
 
-1.  **Kubernetes Cluster**: Accessible via `kubectl`.
+1.  **Kubernetes Cluster**: Accessible via `kubectl` with sufficient CPU/memory.
+    - For Minikube setup (including IPVS mode and recommended sizing), follow `doc/minikube-ipvs-setup.md`.
 2.  **Operator Repository**: Cloned locally.
 3.  **[llm-d-inference-scheduler](https://github.com/llm-d/llm-d-inference-scheduler)** Cloned locally as a sibling repo for above.
+4.  **Istio**: Required for Gateway API functionality (installed in Step 2).
 
 ```bash
 cd llm-d-scheduler-sim-operator
@@ -21,9 +23,29 @@ kubectl create namespace llm-d-sim
 kubectl create namespace llm-d-inference-scheduler
 ```
 
-## Step 2: Install Operator & RBAC
+## Step 2: Install Istio
 
-First, install the Custom Resource Definitions (CRDs) and deploy the operator with necessary permissions.
+Istio is required for the Gateway API functionality. Install it before deploying the operator.
+
+```bash
+# Install Istio with minimal profile (suitable for testing)
+./istio-1.28.3/bin/istioctl install --set profile=minimal -y
+
+# Verify Istio installation
+kubectl get pods -n istio-system
+
+# Expected output: istiod pod should be Running
+```
+
+**Note:** If you encounter memory issues with istiod, you can reduce its memory requirements:
+```bash
+kubectl patch deployment istiod -n istio-system --type='json' \
+  -p='[{"op": "replace", "path": "/spec/template/spec/containers/0/resources/requests/memory", "value": "128Mi"}]'
+```
+
+## Step 3: Install Operator & RBAC
+
+Install the Custom Resource Definitions (CRDs) and deploy the operator with necessary permissions.
 
 ```bash
 # 1. Install CRDs
@@ -33,13 +55,16 @@ make install
 kubectl get crd simulatordeployments.sim.llm-d.io
 kubectl get crd schedulerinstalls.sim.llm-d.io
 
+# Apply the full stack configuration. This single CR creates the EPP, Gateway, and Simulator pods.
+kubectl apply -f config/samples/sim_v1alpha1_simulatordeployment_full.yaml -n llm-d-sim
+
 # 2. Set up RBAC for EPP
 ./script/create-epp-rbac.sh
 ```
 
 *Wait for the operator to initialize.*
 
-## Step 3: Install Gateway API CRDs (Required for Scheduler Routing)
+## Step 4: Install Gateway API CRDs (Required for Scheduler Routing)
 
 The scheduler workflow uses Gateway API (`Gateway` + `HTTPRoute` + `ReferenceGrant`).
 
@@ -48,13 +73,9 @@ kubectl apply -k ../llm-d-inference-scheduler/deploy/components/crds-gateway-api
 kubectl api-resources | rg -i "gateway|httproute|referencegrant"
 ```
 
-## Step 4: Deploy the Simulator and Scheduler Stack
-
-Apply the full stack configuration. This single CR creates the EPP, Gateway, and Simulator pods.
+## Step 5: Deploy the Simulator and Scheduler Stack
 
 ```bash
-kubectl apply -f config/samples/sim_v1alpha1_simulatordeployment_full.yaml
-
 # Deploy Operator with fixes (optional, if necessary)
 ./script/redeploy-with-fixes.sh
 ```
@@ -71,7 +92,7 @@ Start operator.
 ./bin/manager > /tmp/operator.log
 ```
 
-## Step 5: Verify Deployment
+## Step 6: Verify Deployment
 
 Wait for all pods to be ready:
 
@@ -86,9 +107,17 @@ kubectl get pods -n llm-d-inference-scheduler -w
 - `ms-sim-llm-d-modelservice-decode`: **Running** (2 replicas)
 - `ms-sim-llm-d-modelservice-prefill`: **Running** (2 replicas)
 - `gaie-inference-scheduling-epp`: **Running**
-- `infra-inference-scheduling-inference-gateway-istio`: **Running**
+- Istio Gateway pods (created automatically): **Running** -  `kubectl get gatewayclass`
 
-## Step 6: Test Connectivity
+
+**Note:** The Gateway resource `infra-inference-scheduling-inference-gateway` automatically creates a Kubernetes Service named `infra-inference-scheduling-inference-gateway-istio` (with `-istio` suffix added by Istio). This service is used for port-forwarding in the next step.
+
+Verify the gateway service exists:
+```bash
+kubectl get svc -n llm-d-inference-scheduler infra-inference-scheduling-inference-gateway-istio
+```
+
+## Step 7: Test Connectivity
 
 ### Method A: Scheduler Gateway (Recommended)
 Forward the scheduler gateway and send inference requests through it.
@@ -174,3 +203,7 @@ make uninstall
 kubectl delete namespace llm-d-sim
 kubectl delete namespace llm-d-inference-scheduler
 ```
+
+## Debug Image Rollout
+
+For rebuilding and rolling out the EPP debug image, see `doc/development.md`.

@@ -3,6 +3,7 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -190,7 +191,7 @@ func (r *SimulatorDeploymentReconciler) reconcileDeployment(ctx context.Context,
 							Name:            "decode",
 							Image:           simDep.Spec.Image,
 							ImagePullPolicy: corev1.PullNever, // Use local image only
-							Args: r.buildSimulatorArgs(simDep.Spec.LogVerbosity, simDep.Spec.Service.Port, nil),
+							Args:            r.buildSimulatorArgs(simDep.Spec.LogVerbosity, simDep.Spec.Service.Port, nil),
 							Ports: []corev1.ContainerPort{
 								{
 									Name:          "http",
@@ -423,6 +424,8 @@ func (r *SimulatorDeploymentReconciler) reconcileEPP(ctx context.Context, simDep
 	if eppConfig.Port == 0 {
 		eppConfig.Port = 8100
 	}
+	grpcPort := eppConfig.Port
+	healthPort := grpcPort + 1
 
 	// Create EPP Deployment
 	deployment := &appsv1.Deployment{
@@ -456,23 +459,38 @@ func (r *SimulatorDeploymentReconciler) reconcileEPP(ctx context.Context, simDep
 							Name:            "epp",
 							Image:           eppConfig.Image,
 							ImagePullPolicy: corev1.PullIfNotPresent,
-							Args: []string{
-								"--pool-name",
-								"gaie-sim",
-								"--pool-namespace",
-								simDep.Namespace,
-								"--pool-group",
-								"inference.networking.x-k8s.io",
-								"--zap-encoder",
-								"json",
-								"--config-file",
-								"/config/default-plugins.yaml",
-								"--kv-cache-usage-percentage-metric",
-								"vllm:kv_cache_usage_perc",
-								"--v",
-								"1",
-								"--tracing=false",
-							},
+							Args: func() []string {
+								verbosity := eppConfig.Verbosity
+								if verbosity == 0 {
+									verbosity = 1
+								}
+								args := []string{
+									"--pool-name",
+									"gaie-sim",
+									"--pool-namespace",
+									simDep.Namespace,
+									"--pool-group",
+									"inference.networking.k8s.io",
+									"--zap-encoder",
+									"json",
+									"--config-file",
+									"/config/default-plugins.yaml",
+									"--kv-cache-usage-percentage-metric",
+									"vllm:kv_cache_usage_perc",
+									"--secure-serving=false",
+									"--grpc-port",
+									strconv.Itoa(int(grpcPort)),
+									"--grpc-health-port",
+									strconv.Itoa(int(healthPort)),
+									"--v",
+									strconv.Itoa(int(verbosity)),
+									"--tracing=false",
+								}
+								if len(eppConfig.Args) > 0 {
+									args = append(args, eppConfig.Args...)
+								}
+								return args
+							}(),
 							Env: []corev1.EnvVar{
 								{
 									Name: "NAMESPACE",
@@ -496,12 +514,12 @@ func (r *SimulatorDeploymentReconciler) reconcileEPP(ctx context.Context, simDep
 							Ports: []corev1.ContainerPort{
 								{
 									Name:          "grpc",
-									ContainerPort: 9002,
+									ContainerPort: grpcPort,
 									Protocol:      corev1.ProtocolTCP,
 								},
 								{
 									Name:          "grpc-health",
-									ContainerPort: 9003,
+									ContainerPort: healthPort,
 									Protocol:      corev1.ProtocolTCP,
 								},
 								{
@@ -513,7 +531,7 @@ func (r *SimulatorDeploymentReconciler) reconcileEPP(ctx context.Context, simDep
 							LivenessProbe: &corev1.Probe{
 								ProbeHandler: corev1.ProbeHandler{
 									TCPSocket: &corev1.TCPSocketAction{
-										Port: intstr.FromInt(9003),
+										Port: intstr.FromInt(int(healthPort)),
 									},
 								},
 								InitialDelaySeconds: 5,
@@ -525,7 +543,7 @@ func (r *SimulatorDeploymentReconciler) reconcileEPP(ctx context.Context, simDep
 							ReadinessProbe: &corev1.Probe{
 								ProbeHandler: corev1.ProbeHandler{
 									TCPSocket: &corev1.TCPSocketAction{
-										Port: intstr.FromInt(9003),
+										Port: intstr.FromInt(int(healthPort)),
 									},
 								},
 								PeriodSeconds:    2,

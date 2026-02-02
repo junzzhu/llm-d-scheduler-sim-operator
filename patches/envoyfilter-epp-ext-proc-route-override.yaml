@@ -1,0 +1,76 @@
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: epp-ext-proc-poc
+  namespace: llm-d-inference-scheduler
+spec:
+  workloadSelector:
+    labels:
+      gateway.networking.k8s.io/gateway-name: infra-inference-scheduling-inference-gateway
+  configPatches:
+  - applyTo: HTTP_FILTER
+    match:
+      context: GATEWAY
+      listener:
+        filterChain:
+          filter:
+            name: envoy.filters.network.http_connection_manager
+            subFilter:
+              name: envoy.filters.http.ext_proc
+    patch:
+      operation: REPLACE
+      value:
+        name: envoy.filters.http.ext_proc
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor
+          grpc_service:
+            envoy_grpc:
+              cluster_name: epp-cluster
+            timeout: 2s
+          processing_mode:
+            request_header_mode: SKIP
+            request_body_mode: BUFFERED
+            response_header_mode: SKIP
+            response_body_mode: NONE
+
+  - applyTo: CLUSTER
+    match:
+      context: GATEWAY
+    patch:
+      operation: ADD
+      value:
+        name: epp-cluster
+        type: STATIC
+        connect_timeout: 2s
+        lb_policy: ROUND_ROBIN
+        http2_protocol_options: {}
+        load_assignment:
+          cluster_name: epp-cluster
+          endpoints:
+          - lb_endpoints:
+            - endpoint:
+                address:
+                  socket_address:
+                    address: 10.100.95.99
+                    port_value: 9002
+
+  - applyTo: HTTP_ROUTE
+    match:
+      context: GATEWAY
+      routeConfiguration:
+        name: http.80
+        vhost:
+          name: "*:80"
+    patch:
+      operation: MERGE
+      value:
+        typed_per_filter_config:
+          envoy.filters.http.ext_proc:
+            "@type": type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExtProcPerRoute
+            overrides:
+              processing_mode:
+                request_header_mode: SKIP
+                request_body_mode: BUFFERED
+                response_header_mode: SKIP
+                response_body_mode: NONE
+              failure_mode_allow: true
