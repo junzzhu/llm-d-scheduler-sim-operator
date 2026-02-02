@@ -28,8 +28,8 @@ minikube mount ~/github/llm-d-scheduler-sim-operator/llm-d-inference-scheduler:/
 The EPP build requires `python3-dev`, `libzmq3-dev`, and `libtokenizers`. Build a local image and load it into minikube:
 
 ```bash
-docker build -t epp-dev:local -f epp-dev/Dockerfile epp-dev
-minikube image load epp-dev:local
+docker build -t epp-dev:local-v4 -f epp-dev/Dockerfile epp-dev
+minikube image load epp-dev:local-v4
 ```
 
 ## Step 1.5: Persistent Go caches (recommended)
@@ -64,6 +64,8 @@ kubectl logs -n llm-d-inference-scheduler deploy/gaie-inference-scheduling-epp -
 ## Notes
 
 - You would need to **Scale the operator to 0 while you use the dev patch**
+- Instrumentation for EPP logs and scoring is currently tracked under
+  `llm-d-inference-scheduler/_deps/gateway-api-inference-extension/` and will be committed in this repo.
 - Use following to verify whether step 2A works properly
 
 ```bash
