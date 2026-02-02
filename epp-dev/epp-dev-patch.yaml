@@ -1,0 +1,56 @@
+spec:
+  template:
+    spec:
+      containers:
+      - name: epp
+        image: epp-dev:local-v4
+        imagePullPolicy: IfNotPresent
+        workingDir: /mnt/epp-src
+        command: ["/bin/sh","-c"]
+        args:
+        - |
+          go env -w GOPROXY=direct &&
+          export CGO_CFLAGS="$(python3-config --includes)" &&
+          export CGO_LDFLAGS="$(python3-config --embed --ldflags) -L/usr/local/lib -ltokenizers" &&
+          go run -x ./cmd/epp/main.go \
+            --pool-name=gaie-inference-scheduling \
+            --pool-namespace=llm-d-sim \
+            --pool-group=inference.networking.k8s.io \
+            --zap-encoder=json \
+            --config-file=/etc/epp/epp-config.yaml \
+            --kv-cache-usage-percentage-metric=vllm:kv_cache_usage_perc \
+            --secure-serving=false \
+            --grpc-port=9002 \
+            --grpc-health-port=9003 \
+            --v=9 \
+            --tracing=false
+        volumeMounts:
+        - name: epp-src
+          mountPath: /mnt/epp-src
+        - name: epp-config
+          mountPath: /etc/epp
+        - name: go-mod-cache
+          mountPath: /go/pkg/mod
+        - name: go-build-cache
+          mountPath: /root/.cache/go-build
+        resources:
+          requests:
+            memory: "256Mi"
+          limits:
+            memory: "1Gi"
+      volumes:
+      - name: epp-src
+        hostPath:
+          path: /mnt/epp-src
+          type: Directory
+      - name: go-mod-cache
+        hostPath:
+          path: /mnt/epp-go-mod
+          type: DirectoryOrCreate
+      - name: go-build-cache
+        hostPath:
+          path: /mnt/epp-go-build
+          type: DirectoryOrCreate
+      - name: epp-config
+        configMap:
+          name: gaie-inference-scheduling-epp-config
