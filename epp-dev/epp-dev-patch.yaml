@@ -18,11 +18,11 @@ spec:
             --pool-group=inference.networking.k8s.io \
             --zap-encoder=json \
             --config-file=/etc/epp/epp-config.yaml \
-            --kv-cache-usage-percentage-metric=vllm:kv_cache_usage_perc \
+            --kv-cache-usage-percentage-metric=vllm:gpu_cache_usage_perc \
             --secure-serving=false \
             --grpc-port=9002 \
             --grpc-health-port=9003 \
-            --v=9 \
+            --v=4 \
             --tracing=false
         volumeMounts:
         - name: epp-src
