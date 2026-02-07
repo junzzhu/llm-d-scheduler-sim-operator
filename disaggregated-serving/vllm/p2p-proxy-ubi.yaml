@@ -1,0 +1,37 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: vllm-p2p-proxy
+  namespace: llm-d-vllm
+  labels:
+    app: vllm-p2p-test
+    role: proxy
+spec:
+  restartPolicy: Always
+  containers:
+  - name: proxy
+    image: registry.access.redhat.com/ubi9/python-311:latest
+    command: ["/bin/bash", "-c"]
+    args:
+      - |
+        pip install --no-cache-dir quart aiohttp && \
+        python /app/proxy.py
+    env:
+    - name: PREFILL_URL
+      value: "http://vllm-prefill-p2p:8000"
+    - name: DECODE_URL
+      value: "http://vllm-decode-p2p:8000"
+    - name: PREFILL_ZMQ
+      value: "vllm-prefill-p2p:14579"
+    - name: DECODE_ZMQ
+      value: "vllm-decode-p2p:14579"
+    ports:
+    - containerPort: 8080
+      name: http
+    volumeMounts:
+    - name: proxy-script
+      mountPath: /app
+  volumes:
+  - name: proxy-script
+    configMap:
+      name: p2p-proxy-script

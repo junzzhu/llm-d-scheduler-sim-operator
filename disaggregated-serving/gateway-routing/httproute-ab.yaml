@@ -1,0 +1,44 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: vllm-ab-test
+  namespace: llm-d-inference-scheduler
+spec:
+  parentRefs:
+  - name: infra-inference-scheduling-inference-gateway
+    namespace: llm-d-inference-scheduler
+  
+  rules:
+  # Route 1: NVLink backend (when x-kv-backend: nvlink)
+  - matches:
+    - headers:
+      - name: x-kv-backend
+        value: nvlink
+      path:
+        type: PathPrefix
+        value: /
+    backendRefs:
+    - name: vllm-p2p-proxy
+      namespace: llm-d-vllm
+      port: 8080
+      weight: 1
+    timeouts:
+      backendRequest: 0s
+      request: 0s
+  
+  # Route 2: Filesystem backend (when x-kv-backend: fs)
+  - matches:
+    - headers:
+      - name: x-kv-backend
+        value: fs
+      path:
+        type: PathPrefix
+        value: /
+    backendRefs:
+    - name: vllm-fs-proxy
+      namespace: llm-d-vllm
+      port: 8080
+      weight: 1
+    timeouts:
+      backendRequest: 0s
+      request: 0s

@@ -1,0 +1,59 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-fs-proxy
+  namespace: llm-d-vllm
+  labels:
+    app: vllm-fs-test
+    role: proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vllm-fs-test
+      role: proxy
+  template:
+    metadata:
+      labels:
+        app: vllm-fs-test
+        role: proxy
+    spec:
+      containers:
+      - name: proxy
+        image: registry.access.redhat.com/ubi9/python-311:latest
+        command: ["/bin/bash", "-c"]
+        args:
+        - |
+          pip install --no-cache-dir quart aiohttp && \
+          python /app/proxy.py
+        env:
+        - name: PREFILL_URL
+          value: "http://vllm-prefill-fs:8000"
+        - name: DECODE_URL
+          value: "http://vllm-decode-fs:8000"
+        ports:
+        - containerPort: 8080
+          name: http
+        volumeMounts:
+        - name: proxy-script
+          mountPath: /app
+      volumes:
+      - name: proxy-script
+        configMap:
+          name: fs-proxy-script
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-fs-proxy
+  namespace: llm-d-vllm
+spec:
+  selector:
+    app: vllm-fs-test
+    role: proxy
+  ports:
+  - port: 8080
+    targetPort: 8080
+    name: http

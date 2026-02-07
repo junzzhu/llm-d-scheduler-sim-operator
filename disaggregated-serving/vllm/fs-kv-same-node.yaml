@@ -1,0 +1,305 @@
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: vllm-prefill-fs
+  namespace: llm-d-vllm
+  labels:
+    app: vllm-fs-test
+    role: prefill
+    case: fs-same
+spec:
+  nodeSelector:
+    nvidia.com/gpu.product: "NVIDIA-H100-NVL"
+  volumes:
+  - name: nfs-volume
+    nfs:
+      server: 10.17.37.59
+      path: /data/tests
+      readOnly: false
+  - name: kv-cache-storage
+    emptyDir: {}
+  containers:
+  - name: vllm-prefill
+    image: vllm/vllm-openai:latest
+    command: ["vllm"]
+    args:
+    - "serve"
+    - "Qwen/Qwen3-Coder-30B-A3B-Instruct"
+    - "--tensor-parallel-size=1"
+    - "--port=8000"
+    - "--enable-auto-tool-choice"
+    - "--tool-call-parser=qwen3_coder"
+    - "--kv-cache-dtype=fp8"
+    - "--gpu-memory-utilization=0.90"
+    - "--max-model-len=2048"
+    - '--kv-transfer-config={"kv_connector":"ExampleConnector","kv_role":"kv_producer","kv_connector_extra_config":{"shared_storage_path":"/kv_cache"}}'
+    env:
+    - name: HF_HOME
+      value: /models
+    - name: HF_HUB_ENABLE_HF_TRANSFER
+      value: "1"
+    ports:
+    - containerPort: 8000
+      name: http
+    readinessProbe:
+      httpGet:
+        path: /health
+        port: http
+      initialDelaySeconds: 10
+      periodSeconds: 5
+      timeoutSeconds: 2
+      failureThreshold: 12
+    startupProbe:
+      httpGet:
+        path: /health
+        port: http
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 2
+      failureThreshold: 90
+    resources:
+      limits:
+        nvidia.com/gpu: 1
+    volumeMounts:
+    - name: nfs-volume
+      mountPath: /models
+    - name: kv-cache-storage
+      mountPath: /kv_cache
+
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: vllm-decode-fs
+  namespace: llm-d-vllm
+  labels:
+    app: vllm-fs-test
+    role: decode
+    case: fs-same
+spec:
+  nodeSelector:
+    nvidia.com/gpu.product: "NVIDIA-H100-NVL"
+  volumes:
+  - name: nfs-volume
+    nfs:
+      server: 10.17.37.59
+      path: /data/tests
+      readOnly: false
+  - name: kv-cache-storage
+    emptyDir: {}
+  affinity:
+    podAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchLabels:
+            app: vllm-fs-test
+            role: prefill
+            case: fs-same
+        topologyKey: kubernetes.io/hostname
+  containers:
+  - name: vllm-decode
+    image: vllm/vllm-openai:latest
+    command: ["vllm"]
+    args:
+    - "serve"
+    - "Qwen/Qwen3-Coder-30B-A3B-Instruct"
+    - "--tensor-parallel-size=1"
+    - "--port=8000"
+    - "--enable-auto-tool-choice"
+    - "--tool-call-parser=qwen3_coder"
+    - "--kv-cache-dtype=fp8"
+    - "--gpu-memory-utilization=0.90"
+    - "--max-model-len=2048"
+    - '--kv-transfer-config={"kv_connector":"ExampleConnector","kv_role":"kv_consumer","kv_connector_extra_config":{"shared_storage_path":"/kv_cache"}}'
+    env:
+    - name: HF_HOME
+      value: /models
+    - name: HF_HUB_ENABLE_HF_TRANSFER
+      value: "1"
+    ports:
+    - containerPort: 8000
+      name: http
+    readinessProbe:
+      httpGet:
+        path: /health
+        port: http
+      initialDelaySeconds: 10
+      periodSeconds: 5
+      timeoutSeconds: 2
+      failureThreshold: 12
+    startupProbe:
+      httpGet:
+        path: /health
+        port: http
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 2
+      failureThreshold: 90
+    resources:
+      limits:
+        nvidia.com/gpu: 1
+    volumeMounts:
+    - name: nfs-volume
+      mountPath: /models
+    - name: kv-cache-storage
+      mountPath: /kv_cache
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-prefill-fs
+  namespace: llm-d-vllm
+spec:
+  selector:
+    app: vllm-fs-test
+    role: prefill
+    case: fs-same
+  ports:
+  - port: 8000
+    targetPort: 8000
+    name: http
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-decode-fs
+  namespace: llm-d-vllm
+spec:
+  selector:
+    app: vllm-fs-test
+    role: decode
+    case: fs-same
+  ports:
+  - port: 8000
+    targetPort: 8000
+    name: http
+
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: vllm-fs-proxy
+  namespace: llm-d-vllm
+  labels:
+    app: vllm-fs-test
+    role: proxy
+spec:
+  containers:
+  - name: proxy
+    image: python:3.11-slim
+    command: ["/bin/bash", "-c"]
+    args:
+    - |
+      pip install --no-cache-dir quart aiohttp && \
+      python /app/proxy.py
+    env:
+    - name: PREFILL_URL
+      value: "http://vllm-prefill-fs:8000"
+    - name: DECODE_URL
+      value: "http://vllm-decode-fs:8000"
+    ports:
+    - containerPort: 8080
+      name: http
+    volumeMounts:
+    - name: proxy-script
+      mountPath: /app
+  volumes:
+  - name: proxy-script
+    configMap:
+      name: fs-proxy-script
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fs-proxy-script
+  namespace: llm-d-vllm
+data:
+  proxy.py: |
+    #!/usr/bin/env python3
+    import os
+    import uuid
+    import aiohttp
+    from quart import Quart, request, make_response
+
+    app = Quart(__name__)
+
+    PREFILL_URL = os.getenv("PREFILL_URL", "http://vllm-prefill-fs:8000")
+    DECODE_URL = os.getenv("DECODE_URL", "http://vllm-decode-fs:8000")
+
+    AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=6 * 60 * 60)
+
+    def random_uuid():
+        return str(uuid.uuid4().hex)
+
+    async def forward_request(url, data, request_id):
+        async with aiohttp.ClientSession(timeout=AIOHTTP_TIMEOUT) as session:
+            headers = {"X-Request-Id": request_id, "Content-Type": "application/json"}
+            async with session.post(url=url, json=data, headers=headers) as response:
+                if response.status == 200:
+                    async for chunk_bytes in response.content.iter_chunked(1024):
+                        yield chunk_bytes
+                else:
+                    error_text = await response.text()
+                    raise Exception(f"Request failed: {response.status} - {error_text}")
+
+    @app.route("/v1/completions", methods=["POST"])
+    @app.route("/v1/chat/completions", methods=["POST"])
+    async def handle_request():
+        try:
+            original_request_data = await request.get_json()
+
+            # Keep the same request_id across prefill and decode so the KV connector can
+            # associate produced KV with the consumer request via shared storage.
+            request_id = random_uuid()
+
+            prefill_request = original_request_data.copy()
+            prefill_request["max_tokens"] = 1
+            if "max_completion_tokens" in prefill_request:
+                prefill_request["max_completion_tokens"] = 1
+
+            print(f"[FS] Routing request {request_id}")
+
+            async for _ in forward_request(f"{PREFILL_URL}{request.path}", prefill_request, request_id):
+                continue
+
+            print("[FS] Prefill complete, forwarding to decode...")
+
+            generator = forward_request(f"{DECODE_URL}{request.path}", original_request_data, request_id)
+            response = await make_response(generator)
+            response.timeout = None
+            return response
+        except Exception as e:
+            import traceback
+            print(f"[FS] Error in proxy: {e}")
+            traceback.print_exc()
+            return {"error": str(e)}, 500
+
+    @app.route("/health", methods=["GET"])
+    async def health():
+        return {"status": "healthy", "mode": "fs-kv", "prefill": PREFILL_URL, "decode": DECODE_URL}
+
+    if __name__ == "__main__":
+        print("Starting Filesystem KV Proxy Server")
+        print(f"Prefill: {PREFILL_URL}")
+        print(f"Decode:  {DECODE_URL}")
+        app.run(host="0.0.0.0", port=8080)
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-fs-proxy
+  namespace: llm-d-vllm
+spec:
+  selector:
+    app: vllm-fs-test
+    role: proxy
+  ports:
+  - port: 8080
+    targetPort: 8080
+    name: http
+
