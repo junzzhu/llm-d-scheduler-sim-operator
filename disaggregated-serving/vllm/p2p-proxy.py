@@ -6,9 +6,8 @@ Routes requests between prefill and decode instances with proper request IDs
 
 import os
 import uuid
-import asyncio
 import aiohttp
-from quart import Quart, request, make_response
+from quart import Quart, request
 
 app = Quart(__name__)
 
@@ -24,7 +23,7 @@ def random_uuid() -> str:
     return str(uuid.uuid4().hex)
 
 async def forward_request(url, data, request_id):
-    """Forward request to vLLM instance with custom request ID"""
+    """Forward request to vLLM and return full body + content type."""
     async with aiohttp.ClientSession(timeout=AIOHTTP_TIMEOUT) as session:
         headers = {
             "X-Request-Id": request_id,
@@ -32,11 +31,11 @@ async def forward_request(url, data, request_id):
         }
         async with session.post(url=url, json=data, headers=headers) as response:
             if response.status == 200:
-                async for chunk_bytes in response.content.iter_chunked(1024):
-                    yield chunk_bytes
-            else:
-                error_text = await response.text()
-                raise Exception(f"Request failed: {response.status} - {error_text}")
+                body = await response.read()
+                content_type = response.headers.get("Content-Type", "application/json")
+                return body, content_type
+            error_text = await response.text()
+            raise Exception(f"Request failed: {response.status} - {error_text}")
 
 @app.route("/v1/completions", methods=["POST"])
 @app.route("/v1/chat/completions", methods=["POST"])
@@ -62,25 +61,17 @@ async def handle_request():
         print(f"  Decode:  {DECODE_URL} (ZMQ: {DECODE_ZMQ})")
         
         # Step 1: Send to prefill (saves KV cache)
-        async for _ in forward_request(
-            f"{PREFILL_URL}{request.path}", 
-            prefill_request, 
-            request_id
-        ):
-            continue  # Consume prefill response
+        await forward_request(f"{PREFILL_URL}{request.path}", prefill_request, request_id)
         
         print(f"Prefill complete for {request_id}, forwarding to decode...")
         
         # Step 2: Send to decode (loads KV cache and continues)
-        generator = forward_request(
-            f"{DECODE_URL}{request.path}", 
-            original_request_data, 
-            request_id
+        decode_body, content_type = await forward_request(
+            f"{DECODE_URL}{request.path}",
+            original_request_data,
+            request_id,
         )
-        response = await make_response(generator)
-        response.timeout = None
-        
-        return response
+        return decode_body, 200, {"Content-Type": content_type}
         
     except Exception as e:
         import traceback
@@ -92,6 +83,27 @@ async def handle_request():
 async def health():
     """Health check endpoint"""
     return {"status": "healthy", "prefill": PREFILL_URL, "decode": DECODE_URL}
+
+
+@app.route("/metrics", methods=["GET"])
+async def metrics():
+    """Expose backend vLLM metrics so EPP can score proxy endpoints."""
+    last_error = ""
+    for base_url in (DECODE_URL, PREFILL_URL):
+        try:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
+                async with session.get(f"{base_url}/metrics") as response:
+                    body = await response.text()
+                    if response.status == 200:
+                        content_type = response.headers.get(
+                            "Content-Type",
+                            "text/plain; version=0.0.4",
+                        )
+                        return body, 200, {"Content-Type": content_type}
+        except Exception as e:
+            last_error = str(e)
+            continue
+    return {"error": f"Unable to fetch backend metrics: {last_error}"}, 503
 
 if __name__ == "__main__":
     print("Starting P2P NCCL Proxy Server")
