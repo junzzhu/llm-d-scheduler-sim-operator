@@ -156,6 +156,9 @@ func (r *SchedulerInstallReconciler) setDefaults(install *simv1alpha1.SchedulerI
 		if install.Spec.EPP.PoolNamespace == "" {
 			install.Spec.EPP.PoolNamespace = install.Spec.SimulatorNamespace
 		}
+		if install.Spec.EPP.ConfigProfile == "" {
+			install.Spec.EPP.ConfigProfile = "default"
+		}
 	}
 
 	if install.Spec.Gateway != nil {
@@ -346,6 +349,45 @@ schedulingProfiles:
   - pluginRef: kv-cache-utilization-scorer
     weight: 1
 `
+	if install.Spec.EPP.ConfigProfile == "proxy-performance" {
+		pluginsConfig = `apiVersion: inference.networking.x-k8s.io/v1alpha1
+kind: EndpointPickerConfig
+plugins:
+- type: active-request-scorer
+  parameters:
+    requestTimeout: "2m"
+- type: max-score-picker
+- type: single-profile-handler
+schedulingProfiles:
+- name: default
+  plugins:
+  - pluginRef: max-score-picker
+  - pluginRef: active-request-scorer
+    weight: 1
+`
+	} else if install.Spec.EPP.ConfigProfile == "proxy-performance-by-backend" {
+		pluginsConfig = `apiVersion: inference.networking.x-k8s.io/v1alpha1
+kind: EndpointPickerConfig
+plugins:
+- type: active-request-scorer
+  parameters:
+    requestTimeout: "2m"
+- type: by-label-selector
+  name: by-kv-backend
+  parameters:
+    matchLabels:
+      llm-d.ai/kv-backend: nvlink
+- type: max-score-picker
+- type: single-profile-handler
+schedulingProfiles:
+- name: default
+  plugins:
+  - pluginRef: by-kv-backend
+  - pluginRef: max-score-picker
+  - pluginRef: active-request-scorer
+    weight: 1
+`
+	}
 
 	configMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{

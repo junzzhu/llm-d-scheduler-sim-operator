@@ -187,6 +187,18 @@ spec:
                           More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                         type: object
                     type: object
+                  configProfile:
+                    default: default
+                    description: |-
+                      ConfigProfile selects the generated EPP plugin profile.
+                      "default" keeps the existing decode-oriented behavior.
+                      "proxy-performance" enables active-request based scoring for proxy endpoints.
+                      "proxy-performance-by-backend" adds label-based backend partitioning before scoring.
+                    enum:
+                    - default
+                    - proxy-performance
+                    - proxy-performance-by-backend
+                    type: string
                 type: object
               gateway:
                 description: Gateway configuration (Gateway API)

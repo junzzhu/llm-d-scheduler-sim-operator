@@ -2,28 +2,11 @@
 
 Kubernetes manifests for vLLM disaggregated prefill/decode serving with two KV cache transfer backends and gateway-based A/B testing.
 
-## Directory Structure
-
-```
-disaggregated-serving/
-├── README.md                      # This file
-├── AB_TESTING_PLAN.md             # A/B testing plan and implementation
-├── vllm/                          # vLLM disaggregated serving manifests
-│   ├── fs-kv-same-node.yaml       # Filesystem backend pods
-│   ├── fs-proxy-deployment.yaml   # Filesystem proxy
-│   ├── fs-proxy.py                # Filesystem proxy script
-│   ├── p2p-nccl-same-node.yaml    # P2P NCCL backend pods
-│   ├── p2p-proxy-ubi.yaml         # P2P NCCL proxy
-│   ├── p2p-proxy.py               # P2P NCCL proxy script
-│   └── p2p-proxy.Dockerfile       # P2P NCCL proxy image
-└── gateway-routing/               # Gateway routing for A/B testing
-    └── httproute-ab.yaml          # HTTPRoute for header-based routing
-```
 
 ## KV Cache Transfer Backends
 
 ### 1. Filesystem Backend
-- **Manifests**: [`vllm/fs-kv-same-node.yaml`](vllm/fs-kv-same-node.yaml), [`vllm/fs-proxy-deployment.yaml`](vllm/fs-proxy-deployment.yaml)
+- **Manifests**: [`vllm/fs-kv-same-node.yaml`](vllm/fs-kv-same-node.yaml)
 - Uses `ExampleConnector` with shared `emptyDir` storage at `/kv_cache`
 - Works on any hardware without special requirements
 - Higher latency (disk I/O)
@@ -35,25 +18,6 @@ disaggregated-serving/
 - Requires NVLink-capable GPUs (e.g., H100 NVL) on same node
 - Ultra-low latency (~0.092ms)
 
-## Deployment
-
-### Deploy Backends
-
-```bash
-# Filesystem Backend
-kubectl apply -f disaggregated-serving/vllm/fs-kv-same-node.yaml
-kubectl apply -f disaggregated-serving/vllm/fs-proxy-deployment.yaml
-
-# P2P NCCL Backend
-kubectl apply -f disaggregated-serving/vllm/p2p-nccl-same-node.yaml
-kubectl apply -f disaggregated-serving/vllm/p2p-proxy-ubi.yaml
-```
-
-### Deploy Gateway Routing
-
-```bash
-kubectl apply -f disaggregated-serving/gateway-routing/httproute-ab.yaml
-```
 
 ## Testing
 
@@ -75,28 +39,27 @@ kubectl exec -n llm-d-vllm vllm-decode-p2p -- \
   -d '{"model":"Qwen/Qwen3-Coder-30B-A3B-Instruct","prompt":"Hello","max_tokens":5}'
 ```
 
-### Gateway A/B Testing
+For end-to-end test flows:
+- NVLink vs Filesystem A/B flow: [`AB_TESTING_PLAN.md`](AB_TESTING_PLAN.md)
+- Proxy performance routing flow: [`PROXY_PERFORMANCE_ROUTING_PLAN.md`](PROXY_PERFORMANCE_ROUTING_PLAN.md)
 
-Port-forward the gateway:
-```bash
-kubectl port-forward -n llm-d-inference-scheduler \
-  svc/infra-inference-scheduling-inference-gateway-istio 18080:80
-```
+## Active-Request-Scorer Test Design
 
-Test with header-based routing:
-```bash
-# Test NVLink backend
-curl -X POST http://localhost:18080/v1/completions \
-  -H "Content-Type: application/json" \
-  -H "x-kv-backend: nvlink" \
-  -d '{"model":"Qwen/Qwen3-Coder-30B-A3B-Instruct","prompt":"Hello","max_tokens":5}'
+This design validates that scheduler routing reacts to live load across proxy endpoints.
 
-# Test Filesystem backend
-curl -X POST http://localhost:18080/v1/completions \
-  -H "Content-Type: application/json" \
-  -H "x-kv-backend: fs" \
-  -d '{"model":"Qwen/Qwen3-Coder-30B-A3B-Instruct","prompt":"Hello","max_tokens":5}'
-```
+- Keep the client contract unchanged (standard OpenAI-style API calls to gateway).
+- Route through `HTTPRoute -> InferencePool` so endpoint selection is handled by EPP, not static service routing.
+- Use proxy endpoints (`role=proxy`) as the scheduling candidates:
+  - `vllm-fs-proxy` (Filesystem KV transfer)
+  - `vllm-p2p-proxy` (NVLink/P2P KV transfer)
+- Use `active-request-scorer` as the runtime signal (in-flight requests) to avoid pinning traffic to one endpoint.
+
+### Success Criteria
+
+- Scheduler route backend is `InferencePool` (not direct Service-only routing).
+- EPP profile includes `active-request-scorer`.
+- Under concurrent traffic, requests are observed on both proxy endpoints when both are healthy.
+- No scheduler selection failure signals (for example `InferencePoolResourceExhausted`).
 
 ## Request ID Format
 
@@ -109,13 +72,6 @@ cmpl-___prefill_addr_{prefill_service}___decode_addr_{decode_service}_{uuid}
 - Filesystem: `cmpl-___prefill_addr_vllm-prefill-fs___decode_addr_vllm-decode-fs_{uuid}`
 - P2P NCCL: `cmpl-___prefill_addr_vllm-prefill-p2p:14579___decode_addr_vllm-decode-p2p:14579_{uuid}`
 
-## Gateway Routing
-
-Header-based routing through the scheduler gateway:
-- `x-kv-backend: nvlink` → Routes to P2P NCCL backend
-- `x-kv-backend: fs` → Routes to Filesystem backend
-- No header → Falls through to default scheduler route
-
 ## Status
 
 - ✅ Filesystem Backend: Operational
@@ -125,4 +81,5 @@ Header-based routing through the scheduler gateway:
 
 ## Documentation
 
-- **[AB_TESTING_PLAN.md](AB_TESTING_PLAN.md)** - Complete A/B testing setup, implementation, and performance comparison plan
+- **[AB_TESTING_PLAN.md](AB_TESTING_PLAN.md)** - Complete A/B testing setup and implementation
+- **[PROXY_PERFORMANCE_ROUTING_PLAN.md](PROXY_PERFORMANCE_ROUTING_PLAN.md)** - Performance-based routing plan with opt-in proxy/EPP mode

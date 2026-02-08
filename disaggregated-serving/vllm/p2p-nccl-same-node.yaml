@@ -317,6 +317,23 @@ data:
     async def health():
         return {"status": "healthy", "prefill": PREFILL_URL, "decode": DECODE_URL}
 
+    @app.route("/metrics", methods=["GET"])
+    async def metrics():
+        # Expose backend vLLM metrics so EPP active-request-scorer can score proxy endpoints.
+        last_error = ""
+        for base_url in (DECODE_URL, PREFILL_URL):
+            try:
+                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
+                    async with session.get(f"{base_url}/metrics") as response:
+                        body = await response.text()
+                        if response.status == 200:
+                            content_type = response.headers.get("Content-Type", "text/plain; version=0.0.4")
+                            return body, 200, {"Content-Type": content_type}
+            except Exception as e:
+                last_error = str(e)
+                continue
+        return {"error": f"Unable to fetch backend metrics: {last_error}"}, 503
+
     if __name__ == "__main__":
         print("Starting P2P NCCL Proxy Server")
         print(f"Prefill: {PREFILL_URL} (ZMQ: {PREFILL_ZMQ})")

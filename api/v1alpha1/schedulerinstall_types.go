@@ -88,6 +88,14 @@ type SchedulerEPPConfig struct {
 
 	// Resources defines the resource requirements for EPP pods
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// ConfigProfile selects the generated EPP plugin profile.
+	// "default" keeps the existing decode-oriented behavior.
+	// "proxy-performance" enables active-request based scoring for proxy endpoints.
+	// "proxy-performance-by-backend" adds label-based backend partitioning before scoring.
+	// +kubebuilder:validation:Enum=default;proxy-performance;proxy-performance-by-backend
+	// +kubebuilder:default="default"
+	ConfigProfile string `json:"configProfile,omitempty"`
 }
 
 // SchedulerGatewayConfig defines Gateway API Gateway configuration

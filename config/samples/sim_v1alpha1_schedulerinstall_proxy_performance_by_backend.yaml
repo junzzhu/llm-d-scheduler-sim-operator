@@ -1,0 +1,53 @@
+apiVersion: sim.llm-d.io/v1alpha1
+kind: SchedulerInstall
+metadata:
+  name: llm-sched-install
+  namespace: llm-d-inference-scheduler
+spec:
+  schedulerNamespace: llm-d-inference-scheduler
+  simulatorNamespace: llm-d-vllm
+
+  epp:
+    enabled: true
+    image: ghcr.io/llm-d/llm-d-inference-scheduler:v0.4.0
+    replicas: 1
+    port: 9002
+    poolName: vllm-proxy-performance
+    poolNamespace: llm-d-vllm
+    configProfile: proxy-performance-by-backend
+
+  gateway:
+    enabled: true
+    name: infra-inference-scheduling-inference-gateway
+    className: istio
+    listenerPort: 80
+    listenerProtocol: HTTP
+
+  envoyFilter:
+    enabled: true
+
+  proxyService:
+    name: gaie-inference-scheduling-proxy
+    port: 8080
+    targetPort: 8080
+    selector:
+      role: proxy
+
+  routing:
+    enabled: true
+    httpRouteName: llm-d-inference-scheduling
+    backendType: InferencePool
+    inferencePool:
+      name: vllm-proxy-performance
+      namespace: llm-d-vllm
+      port: 8080
+    parentGateway:
+      name: infra-inference-scheduling-inference-gateway
+      namespace: llm-d-inference-scheduler
+
+  destinationRule:
+    enabled: true
+    algorithm: ROUND_ROBIN
+    connectionPool:
+      http1MaxPendingRequests: 1
+      maxRequestsPerConnection: 1

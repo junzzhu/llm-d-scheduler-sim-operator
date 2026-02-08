@@ -30,7 +30,6 @@ spec:
     - "--port=8000"
     - "--enable-auto-tool-choice"
     - "--tool-call-parser=qwen3_coder"
-    - "--kv-cache-dtype=fp8"
     - "--gpu-memory-utilization=0.90"
     - "--max-model-len=2048"
     - "--no-enable-prefix-caching"
@@ -110,7 +109,6 @@ spec:
     - "--port=8000"
     - "--enable-auto-tool-choice"
     - "--tool-call-parser=qwen3_coder"
-    - "--kv-cache-dtype=fp8"
     - "--gpu-memory-utilization=0.90"
     - "--max-model-len=2048"
     - "--no-enable-prefix-caching"
@@ -182,8 +180,8 @@ spec:
     name: http
 
 ---
-apiVersion: v1
-kind: Pod
+apiVersion: apps/v1
+kind: Deployment
 metadata:
   name: vllm-fs-proxy
   namespace: llm-d-vllm
@@ -191,29 +189,40 @@ metadata:
     app: vllm-fs-test
     role: proxy
 spec:
-  containers:
-  - name: proxy
-    image: python:3.11-slim
-    command: ["/bin/bash", "-c"]
-    args:
-    - |
-      pip install --no-cache-dir quart aiohttp && \
-      python /app/proxy.py
-    env:
-    - name: PREFILL_URL
-      value: "http://vllm-prefill-fs:8000"
-    - name: DECODE_URL
-      value: "http://vllm-decode-fs:8000"
-    ports:
-    - containerPort: 8080
-      name: http
-    volumeMounts:
-    - name: proxy-script
-      mountPath: /app
-  volumes:
-  - name: proxy-script
-    configMap:
-      name: fs-proxy-script
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vllm-fs-test
+      role: proxy
+  template:
+    metadata:
+      labels:
+        app: vllm-fs-test
+        role: proxy
+    spec:
+      containers:
+      - name: proxy
+        image: registry.access.redhat.com/ubi9/python-311:latest
+        command: ["/bin/bash", "-c"]
+        args:
+        - |
+          pip install --no-cache-dir quart aiohttp && \
+          python /app/proxy.py
+        env:
+        - name: PREFILL_URL
+          value: "http://vllm-prefill-fs:8000"
+        - name: DECODE_URL
+          value: "http://vllm-decode-fs:8000"
+        ports:
+        - containerPort: 8080
+          name: http
+        volumeMounts:
+        - name: proxy-script
+          mountPath: /app
+      volumes:
+      - name: proxy-script
+        configMap:
+          name: fs-proxy-script
 
 ---
 apiVersion: v1
@@ -258,7 +267,10 @@ data:
 
             # Keep the same request_id across prefill and decode so the KV connector can
             # associate produced KV with the consumer request via shared storage.
-            request_id = random_uuid()
+            # Include backend addresses in request_id for routing verification.
+            prefill_addr = PREFILL_URL.replace("http://", "").replace(":8000", "")
+            decode_addr = DECODE_URL.replace("http://", "").replace(":8000", "")
+            request_id = f"___prefill_addr_{prefill_addr}___decode_addr_{decode_addr}_{random_uuid()}"
 
             prefill_request = original_request_data.copy()
             prefill_request["max_tokens"] = 1
@@ -285,6 +297,23 @@ data:
     @app.route("/health", methods=["GET"])
     async def health():
         return {"status": "healthy", "mode": "fs-kv", "prefill": PREFILL_URL, "decode": DECODE_URL}
+
+    @app.route("/metrics", methods=["GET"])
+    async def metrics():
+        # Expose backend vLLM metrics so EPP active-request-scorer can score proxy endpoints.
+        last_error = ""
+        for base_url in (DECODE_URL, PREFILL_URL):
+            try:
+                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
+                    async with session.get(f"{base_url}/metrics") as response:
+                        body = await response.text()
+                        if response.status == 200:
+                            content_type = response.headers.get("Content-Type", "text/plain; version=0.0.4")
+                            return body, 200, {"Content-Type": content_type}
+            except Exception as e:
+                last_error = str(e)
+                continue
+        return {"error": f"Unable to fetch backend metrics: {last_error}"}, 503
 
     if __name__ == "__main__":
         print("Starting Filesystem KV Proxy Server")
