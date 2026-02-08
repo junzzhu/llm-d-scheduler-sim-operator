@@ -21,7 +21,7 @@ spec:
     emptyDir: {}
   containers:
   - name: vllm-prefill
-    image: vllm/vllm-openai:latest
+    image: vllm/vllm-openai:v0.15.0
     command: ["vllm"]
     args:
     - "serve"
@@ -33,6 +33,8 @@ spec:
     - "--kv-cache-dtype=fp8"
     - "--gpu-memory-utilization=0.90"
     - "--max-model-len=2048"
+    - "--no-enable-prefix-caching"
+    - "--no-enable-chunked-prefill"
     - '--kv-transfer-config={"kv_connector":"ExampleConnector","kv_role":"kv_producer","kv_connector_extra_config":{"shared_storage_path":"/kv_cache"}}'
     env:
     - name: HF_HOME
@@ -99,7 +101,7 @@ spec:
         topologyKey: kubernetes.io/hostname
   containers:
   - name: vllm-decode
-    image: vllm/vllm-openai:latest
+    image: vllm/vllm-openai:v0.15.0
     command: ["vllm"]
     args:
     - "serve"
@@ -111,6 +113,8 @@ spec:
     - "--kv-cache-dtype=fp8"
     - "--gpu-memory-utilization=0.90"
     - "--max-model-len=2048"
+    - "--no-enable-prefix-caching"
+    - "--no-enable-chunked-prefill"
     - '--kv-transfer-config={"kv_connector":"ExampleConnector","kv_role":"kv_consumer","kv_connector_extra_config":{"shared_storage_path":"/kv_cache"}}'
     env:
     - name: HF_HOME
@@ -302,4 +306,3 @@ spec:
   - port: 8080
     targetPort: 8080
     name: http
-
